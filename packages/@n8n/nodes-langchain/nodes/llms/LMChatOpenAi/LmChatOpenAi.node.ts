@@ -3,6 +3,7 @@
 import { ChatOpenAI, type ClientOptions } from '@langchain/openai';
 import {
 	NodeConnectionTypes,
+	NodeOperationError,
 	type INodeType,
 	type INodeTypeDescription,
 	type ISupplyDataFunctions,
@@ -30,7 +31,7 @@ export class LmChatOpenAi implements INodeType {
 		name: 'lmChatOpenAi',
 		icon: { light: 'file:openAiLight.svg', dark: 'file:openAiLight.dark.svg' },
 		group: ['transform'],
-		version: [1, 1.1, 1.2],
+		version: [1, 1.1, 1.2, 1.3],
 		description: 'For advanced usage with an AI chain',
 		defaults: {
 			name: 'OpenAI Chat Model',
@@ -76,6 +77,18 @@ export class LmChatOpenAi implements INodeType {
 				displayOptions: {
 					show: {
 						'/options.responseFormat': ['json_object'],
+					},
+				},
+			},
+			{
+				displayName:
+					'When using JSON Schema response format, make sure to select latest models (GPT-4o, GPT-4o-mini, GPT-4 Turbo) that support structured outputs.',
+				name: 'jsonSchemaNotice',
+				type: 'notice',
+				default: '',
+				displayOptions: {
+					show: {
+						'/options.responseFormat': ['json_schema'],
 					},
 				},
 			},
@@ -209,6 +222,14 @@ export class LmChatOpenAi implements INodeType {
 						},
 					},
 					{
+						displayName: 'Streaming',
+						name: 'streaming',
+						type: 'boolean',
+						default: false,
+						description:
+							'Enable streaming mode for real-time response generation. Disabled by default for compatibility.',
+					},
+					{
 						displayName: 'Frequency Penalty',
 						name: 'frequencyPenalty',
 						default: 0,
@@ -240,12 +261,32 @@ export class LmChatOpenAi implements INodeType {
 								description: 'Regular text response',
 							},
 							{
-								name: 'JSON',
+								name: 'JSON Object',
 								value: 'json_object',
 								description:
 									'Enables JSON mode, which should guarantee the message the model generates is valid JSON',
 							},
+							{
+								name: 'JSON Schema',
+								value: 'json_schema',
+								description:
+									'Enables structured output with a specific JSON schema. Requires latest models (GPT-4o, GPT-4o-mini, GPT-4 Turbo).',
+							},
 						],
+					},
+					{
+						displayName: 'JSON Schema',
+						name: 'jsonSchema',
+						type: 'json',
+						default:
+							'{\n  "type": "object",\n  "properties": {\n    "name": {\n      "type": "string"\n    },\n    "age": {\n      "type": "number"\n    }\n  },\n  "required": ["name"]\n}',
+						description: 'Define the structure of the JSON response. Must be a valid JSON Schema.',
+						placeholder: 'Enter valid JSON Schema...',
+						displayOptions: {
+							show: {
+								responseFormat: ['json_schema'],
+							},
+						},
 					},
 					{
 						displayName: 'Presence Penalty',
@@ -343,8 +384,10 @@ export class LmChatOpenAi implements INodeType {
 			presencePenalty?: number;
 			temperature?: number;
 			topP?: number;
-			responseFormat?: 'text' | 'json_object';
+			responseFormat?: 'text' | 'json_object' | 'json_schema';
 			reasoningEffort?: 'low' | 'medium' | 'high';
+			streaming?: boolean;
+			jsonSchema?: string;
 		};
 
 		const configuration: ClientOptions = {
@@ -356,18 +399,59 @@ export class LmChatOpenAi implements INodeType {
 			configuration.baseURL = credentials.url as string;
 		}
 
+		// Helper function to get response format
+		const getResponseFormat = (opts: typeof options): object | undefined => {
+			switch (opts.responseFormat) {
+				case 'json_object':
+					return { type: 'json_object' };
+				case 'json_schema':
+					if (!opts.jsonSchema) {
+						throw new NodeOperationError(
+							this.getNode(),
+							'JSON Schema is required when response format is "json_schema"',
+						);
+					}
+					try {
+						const schema = JSON.parse(opts.jsonSchema);
+						// Basic validation of JSON Schema structure
+						if (!schema.type) {
+							throw new Error('JSON Schema must have a "type" field');
+						}
+						return {
+							type: 'json_schema',
+							json_schema: {
+								name: 'custom_schema',
+								schema,
+								strict: true,
+							},
+						};
+					} catch (error) {
+						throw new NodeOperationError(this.getNode(), `Invalid JSON Schema: ${error.message}`);
+					}
+				default:
+					return undefined;
+			}
+		};
+
 		// Extra options to send to OpenAI, that are not directly supported by LangChain
 		const modelKwargs: {
 			response_format?: object;
 			reasoning_effort?: 'low' | 'medium' | 'high';
 		} = {};
-		if (options.responseFormat) modelKwargs.response_format = { type: options.responseFormat };
+
+		// Handle response format including JSON Schema
+		const responseFormat = getResponseFormat(options);
+		if (responseFormat) {
+			modelKwargs.response_format = responseFormat;
+		}
+
 		if (options.reasoningEffort && ['low', 'medium', 'high'].includes(options.reasoningEffort))
 			modelKwargs.reasoning_effort = options.reasoningEffort;
 
 		const model = new ChatOpenAI({
 			openAIApiKey: credentials.apiKey as string,
 			model: modelName,
+			streaming: options.streaming ?? false,
 			...options,
 			timeout: options.timeout ?? 60000,
 			maxRetries: options.maxRetries ?? 2,
