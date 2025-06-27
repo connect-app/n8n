@@ -76,7 +76,7 @@ export class LmChatOpenAi implements INodeType {
 				default: '',
 				displayOptions: {
 					show: {
-						'/options.responseFormat': ['json_object'],
+						responseFormat: ['json_object'],
 					},
 				},
 			},
@@ -88,7 +88,7 @@ export class LmChatOpenAi implements INodeType {
 				default: '',
 				displayOptions: {
 					show: {
-						'/options.responseFormat': ['json_schema'],
+						responseFormat: ['json_schema'],
 					},
 				},
 			},
@@ -202,6 +202,45 @@ export class LmChatOpenAi implements INodeType {
 				},
 			},
 			{
+				displayName: 'Response Format',
+				name: 'responseFormat',
+				type: 'options',
+				default: 'text',
+				options: [
+					{
+						name: 'Text',
+						value: 'text',
+						description: 'Standard text response format',
+					},
+					{
+						name: 'JSON Object',
+						value: 'json_object',
+						description: 'Return response as a JSON object',
+					},
+					{
+						name: 'JSON Schema',
+						value: 'json_schema',
+						description: 'Return response conforming to a specific JSON Schema',
+					},
+				],
+				description: 'Choose the response format for the model output',
+			},
+			{
+				displayName: 'JSON Schema',
+				name: 'jsonSchema',
+				type: 'json',
+				default:
+					'{\n  "type": "object",\n  "properties": {\n    "name": {\n      "type": "string"\n    },\n    "age": {\n      "type": "number"\n    }\n  },\n  "required": ["name"]\n}',
+				description: 'Define the structure of the JSON response. Must be a valid JSON Schema.',
+				placeholder: 'Enter valid JSON Schema...',
+				required: true,
+				displayOptions: {
+					show: {
+						responseFormat: ['json_schema'],
+					},
+				},
+			},
+			{
 				displayName: 'Options',
 				name: 'options',
 				placeholder: 'Add Option',
@@ -248,45 +287,6 @@ export class LmChatOpenAi implements INodeType {
 						typeOptions: {
 							maxValue: 32768,
 						},
-					},
-					{
-						displayName: 'Response Format',
-						name: 'responseFormat',
-						default: 'text',
-						type: 'fixedCollection',
-						typeOptions: {
-							multipleValues: false,
-						},
-						options: [
-							{
-								name: 'text',
-								displayName: 'Text',
-								values: [],
-							},
-							{
-								name: 'json_object',
-								displayName: 'JSON Object',
-								values: [],
-							},
-							{
-								name: 'json_schema',
-								displayName: 'JSON Schema',
-								values: [
-									{
-										displayName: 'JSON Schema',
-										name: 'schema',
-										type: 'json',
-										default:
-											'{\n  "type": "object",\n  "properties": {\n    "name": {\n      "type": "string"\n    },\n    "age": {\n      "type": "number"\n    }\n  },\n  "required": ["name"]\n}',
-										description:
-											'Define the structure of the JSON response. Must be a valid JSON Schema.',
-										placeholder: 'Enter valid JSON Schema...',
-										required: true,
-									},
-								],
-							},
-						],
-						description: 'Choose the response format for the model output',
 					},
 					{
 						displayName: 'Presence Penalty',
@@ -375,6 +375,15 @@ export class LmChatOpenAi implements INodeType {
 				? (this.getNodeParameter('model.value', itemIndex) as string)
 				: (this.getNodeParameter('model', itemIndex) as string);
 
+		const responseFormat = this.getNodeParameter('responseFormat', itemIndex, 'text') as
+			| 'text'
+			| 'json_object'
+			| 'json_schema';
+		const jsonSchema =
+			responseFormat === 'json_schema'
+				? (this.getNodeParameter('jsonSchema', itemIndex, '') as string)
+				: undefined;
+
 		const options = this.getNodeParameter('options', itemIndex, {}) as {
 			baseURL?: string;
 			frequencyPenalty?: number;
@@ -384,11 +393,6 @@ export class LmChatOpenAi implements INodeType {
 			presencePenalty?: number;
 			temperature?: number;
 			topP?: number;
-			responseFormat?: {
-				text?: any;
-				json_object?: any;
-				json_schema?: { schema: string };
-			};
 			reasoningEffort?: 'low' | 'medium' | 'high';
 			streaming?: boolean;
 		};
@@ -403,36 +407,38 @@ export class LmChatOpenAi implements INodeType {
 		}
 
 		// Helper function to get response format
-		const getResponseFormat = (opts: typeof options): object | undefined => {
-			if (!opts.responseFormat) return undefined;
+		const getResponseFormat = (
+			format: typeof responseFormat,
+			schema?: string,
+		): object | undefined => {
+			if (!format || format === 'text') return undefined;
 
-			if (opts.responseFormat.json_object !== undefined) {
+			if (format === 'json_object') {
 				return { type: 'json_object' };
 			}
 
-			if (opts.responseFormat.json_schema !== undefined) {
-				const jsonSchemaData = opts.responseFormat.json_schema;
-				if (!jsonSchemaData?.schema) {
+			if (format === 'json_schema') {
+				if (!schema) {
 					throw new NodeOperationError(
 						this.getNode(),
 						'JSON Schema is required when response format is "json_schema"',
 					);
 				}
 				try {
-					const parsedSchema = JSON.parse(jsonSchemaData.schema);
+					const parsedSchema = JSON.parse(schema);
 
 					// Extract schema name and actual schema
 					let schemaName = 'custom_schema'; // default fallback
-					let schema = parsedSchema;
+					let actualSchema = parsedSchema;
 
 					// If the parsed schema has 'name' and 'schema' properties, use them
 					if (parsedSchema.name && parsedSchema.schema) {
 						schemaName = parsedSchema.name;
-						schema = parsedSchema.schema;
+						actualSchema = parsedSchema.schema;
 					}
 
 					// Basic validation of JSON Schema structure
-					if (!schema.type) {
+					if (!actualSchema.type) {
 						throw new Error('JSON Schema must have a "type" field');
 					}
 
@@ -440,7 +446,7 @@ export class LmChatOpenAi implements INodeType {
 						type: 'json_schema',
 						json_schema: {
 							name: schemaName,
-							schema: schema,
+							schema: actualSchema,
 						},
 					};
 				} catch (error) {
@@ -459,9 +465,9 @@ export class LmChatOpenAi implements INodeType {
 		} = {};
 
 		// Handle response format including JSON Schema
-		const responseFormat = getResponseFormat(options);
-		if (responseFormat) {
-			modelKwargs.response_format = responseFormat;
+		const responseFormatConfig = getResponseFormat(responseFormat, jsonSchema);
+		if (responseFormatConfig) {
+			modelKwargs.response_format = responseFormatConfig;
 		}
 
 		if (options.reasoningEffort && ['low', 'medium', 'high'].includes(options.reasoningEffort))
