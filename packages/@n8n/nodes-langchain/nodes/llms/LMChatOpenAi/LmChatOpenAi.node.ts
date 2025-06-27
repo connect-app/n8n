@@ -253,40 +253,40 @@ export class LmChatOpenAi implements INodeType {
 						displayName: 'Response Format',
 						name: 'responseFormat',
 						default: 'text',
-						type: 'options',
+						type: 'fixedCollection',
+						typeOptions: {
+							multipleValues: false,
+						},
 						options: [
 							{
-								name: 'Text',
-								value: 'text',
-								description: 'Regular text response',
+								name: 'text',
+								displayName: 'Text',
+								values: [],
 							},
 							{
-								name: 'JSON Object',
-								value: 'json_object',
-								description:
-									'Enables JSON mode, which should guarantee the message the model generates is valid JSON',
+								name: 'json_object',
+								displayName: 'JSON Object',
+								values: [],
 							},
 							{
-								name: 'JSON Schema',
-								value: 'json_schema',
-								description:
-									'Enables structured output with a specific JSON schema. Requires latest models (GPT-4o, GPT-4o-mini, GPT-4 Turbo).',
+								name: 'json_schema',
+								displayName: 'JSON Schema',
+								values: [
+									{
+										displayName: 'JSON Schema',
+										name: 'schema',
+										type: 'json',
+										default:
+											'{\n  "type": "object",\n  "properties": {\n    "name": {\n      "type": "string"\n    },\n    "age": {\n      "type": "number"\n    }\n  },\n  "required": ["name"]\n}',
+										description:
+											'Define the structure of the JSON response. Must be a valid JSON Schema.',
+										placeholder: 'Enter valid JSON Schema...',
+										required: true,
+									},
+								],
 							},
 						],
-					},
-					{
-						displayName: 'JSON Schema',
-						name: 'jsonSchema',
-						type: 'json',
-						default:
-							'{\n  "type": "object",\n  "properties": {\n    "name": {\n      "type": "string"\n    },\n    "age": {\n      "type": "number"\n    }\n  },\n  "required": ["name"]\n}',
-						description: 'Define the structure of the JSON response. Must be a valid JSON Schema.',
-						placeholder: 'Enter valid JSON Schema...',
-						displayOptions: {
-							show: {
-								responseFormat: ['json_schema'],
-							},
-						},
+						description: 'Choose the response format for the model output',
 					},
 					{
 						displayName: 'Presence Penalty',
@@ -384,10 +384,13 @@ export class LmChatOpenAi implements INodeType {
 			presencePenalty?: number;
 			temperature?: number;
 			topP?: number;
-			responseFormat?: 'text' | 'json_object' | 'json_schema';
+			responseFormat?: {
+				text?: any;
+				json_object?: any;
+				json_schema?: { schema: string };
+			};
 			reasoningEffort?: 'low' | 'medium' | 'high';
 			streaming?: boolean;
-			jsonSchema?: string;
 		};
 
 		const configuration: ClientOptions = {
@@ -401,36 +404,52 @@ export class LmChatOpenAi implements INodeType {
 
 		// Helper function to get response format
 		const getResponseFormat = (opts: typeof options): object | undefined => {
-			switch (opts.responseFormat) {
-				case 'json_object':
-					return { type: 'json_object' };
-				case 'json_schema':
-					if (!opts.jsonSchema) {
-						throw new NodeOperationError(
-							this.getNode(),
-							'JSON Schema is required when response format is "json_schema"',
-						);
-					}
-					try {
-						const schema = JSON.parse(opts.jsonSchema);
-						// Basic validation of JSON Schema structure
-						if (!schema.type) {
-							throw new Error('JSON Schema must have a "type" field');
-						}
-						return {
-							type: 'json_schema',
-							json_schema: {
-								name: 'custom_schema',
-								schema,
-								strict: true,
-							},
-						};
-					} catch (error) {
-						throw new NodeOperationError(this.getNode(), `Invalid JSON Schema: ${error.message}`);
-					}
-				default:
-					return undefined;
+			if (!opts.responseFormat) return undefined;
+
+			if (opts.responseFormat.json_object !== undefined) {
+				return { type: 'json_object' };
 			}
+
+			if (opts.responseFormat.json_schema !== undefined) {
+				const jsonSchemaData = opts.responseFormat.json_schema;
+				if (!jsonSchemaData?.schema) {
+					throw new NodeOperationError(
+						this.getNode(),
+						'JSON Schema is required when response format is "json_schema"',
+					);
+				}
+				try {
+					const parsedSchema = JSON.parse(jsonSchemaData.schema);
+
+					// Extract schema name and actual schema
+					let schemaName = 'custom_schema'; // default fallback
+					let schema = parsedSchema;
+
+					// If the parsed schema has 'name' and 'schema' properties, use them
+					if (parsedSchema.name && parsedSchema.schema) {
+						schemaName = parsedSchema.name;
+						schema = parsedSchema.schema;
+					}
+
+					// Basic validation of JSON Schema structure
+					if (!schema.type) {
+						throw new Error('JSON Schema must have a "type" field');
+					}
+
+					return {
+						type: 'json_schema',
+						json_schema: {
+							name: schemaName,
+							schema: schema,
+						},
+					};
+				} catch (error) {
+					throw new NodeOperationError(this.getNode(), `Invalid JSON Schema: ${error.message}`);
+				}
+			}
+
+			// Default to text format
+			return undefined;
 		};
 
 		// Extra options to send to OpenAI, that are not directly supported by LangChain
