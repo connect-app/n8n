@@ -11,8 +11,9 @@ RUN mkdir -p /home/node/.n8n && \
     chown -R node:node /home/node/.n8n && \
     chown -R node:node /usr/local/lib/node_modules/n8n
 
-# Copy entrypoint script
-COPY entrypoint.sh /entrypoint.sh
+# Copy entrypoint script with proper permissions
+COPY --chown=node:node entrypoint.sh /entrypoint.sh
+# Ensure the script is executable
 RUN chmod +x /entrypoint.sh
 
 # Switch to node user (which exists in the base image)
@@ -22,4 +23,5 @@ WORKDIR /home/node
 
 EXPOSE 5678
 
+# Use the executable script directly
 ENTRYPOINT ["/entrypoint.sh"] 
