@@ -27,10 +27,14 @@ COPY . .
 RUN npm install -g pnpm@latest
 
 # Install dependencies and build (following official build process)
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN pnpm install --frozen-lockfile
 RUN pnpm build
 
-# Create production deployment in 'compiled' directory (like official build-n8n.mjs)
+# Clean up package.json files for production (like build-n8n.mjs does)
+RUN if [ -f ".github/scripts/trim-fe-packageJson.js" ]; then node .github/scripts/trim-fe-packageJson.js; fi
+
+# Create production deployment in 'compiled' directory (exact command from build-n8n.mjs)
 RUN NODE_ENV=production DOCKER_BUILD=true pnpm --filter=n8n --prod --legacy deploy --no-optional ./compiled
 
 # ==============================================================================
