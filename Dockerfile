@@ -5,19 +5,18 @@ USER root
 # Install dependencies for running without root
 RUN apk add --no-cache su-exec
 
-# Create non-root user for Heroku
-RUN addgroup -g 1000 heroku && \
-    adduser -D -s /bin/bash -u 1000 -G heroku heroku
-
-# Set ownership of n8n files to heroku user
-RUN chown -R heroku:heroku /home/node/.n8n
-RUN chown -R heroku:heroku /usr/local/lib/node_modules/n8n
+# The base image already has a 'node' user, let's use it instead of creating a new one
+# Check if the user exists and create directories with proper permissions
+RUN mkdir -p /home/node/.n8n && \
+    chown -R node:node /home/node/.n8n && \
+    chown -R node:node /usr/local/lib/node_modules/n8n
 
 # Copy entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-USER heroku
+# Switch to node user (which exists in the base image)
+USER node
 
 WORKDIR /home/node
 
