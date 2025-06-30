@@ -1,75 +1,17 @@
 # ==============================================================================
-# STAGE 1: Build Application from Source
+# Heroku Dockerfile - использует готовый образ N8N
 # ==============================================================================
-FROM node:22-alpine AS builder
+FROM ghcr.io/connect-app/n8n/n8n-custom:latest
 
-# Установка pnpm
-RUN npm install -g pnpm@10
+# Переключение на root для настройки Heroku
+USER root
 
-# Установка системных зависимостей (включая GraphicsMagick и tzdata для n8n)
-RUN apk add --no-cache git python3 make g++ graphicsmagick tzdata
-
-WORKDIR /app
-
-# Установка переменной окружения для пропуска lefthook в Docker
-ENV DOCKER_BUILD=true
-
-# Копирование конфигурационных файлов
-COPY package*.json pnpm-*.yaml turbo.json tsconfig.json ./
-COPY patches ./patches
-COPY packages ./packages
-COPY scripts ./scripts
-
-# Установка переменной CI для отключения интерактивных запросов
-ENV CI=true
-
-# Установка зависимостей
-RUN pnpm install --frozen-lockfile
-
-# Сборка ТОЛЬКО пакета n8n (CLI + Editor-UI) без dev-зависимостей
-RUN pnpm turbo run build --filter=n8n
-
-# Создание production deployment в папку compiled
-RUN pnpm --filter=n8n --prod --legacy deploy --no-optional ./compiled
-
-# ==============================================================================
-# STAGE 2: Official N8N Runtime (адаптированный)
-# ==============================================================================
-FROM node:22-alpine AS runtime
-
-# Установка runtime зависимостей (GraphicsMagick для обработки изображений, tzdata для часовых поясов)
-RUN apk add --no-cache graphicsmagick tzdata
-
-ENV NODE_ENV=production
-ENV SHELL=/bin/sh
-
-WORKDIR /home/node
-
-# Копируем собранное приложение из первого этапа
-COPY --from=builder /app/compiled /usr/local/lib/node_modules/n8n
-
-# Перестраиваем нативные модули
-RUN cd /usr/local/lib/node_modules/n8n && \
-    npm rebuild sqlite3 && \
-    ln -s /usr/local/lib/node_modules/n8n/bin/n8n /usr/local/bin/n8n && \
-    mkdir -p /home/node/.n8n
-
-# Установка npm@11.4.2 (как в официальном Dockerfile)
-RUN npm install -g npm@11.4.2
-
-# Установка canvas для PDF (как в официальном Dockerfile)
-RUN cd /usr/local/lib/node_modules/n8n/node_modules/pdfjs-dist && npm install @napi-rs/canvas
-
-# Создание пользователя node (если не существует)
-RUN addgroup -g 1000 node && adduser -u 1000 -G node -s /bin/sh -D node || true
-RUN chown -R node:node /home/node
-
-# Копирование entrypoint.sh скрипта для обработки переменной PORT от Heroku
+# Копирование entrypoint для Heroku (обработка переменной PORT)
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-EXPOSE $PORT
-
+# Возврат к пользователю node
 USER node
 
-ENTRYPOINT ["/entrypoint.sh"]
+# Используем наш entrypoint для Heroku
+ENTRYPOINT ["tini", "--", "/entrypoint.sh"]
