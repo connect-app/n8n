@@ -20,16 +20,16 @@ COPY patches ./patches
 COPY packages ./packages
 COPY scripts ./scripts
 
+# Установка переменной CI для отключения интерактивных запросов
+ENV CI=true
+
 # Установка зависимостей
 RUN pnpm install --frozen-lockfile
 
-# Разрешение выполнения скриптов сборки для зависимостей
-RUN pnpm approve-builds
+# Установка tsup для extension-sdk
+RUN pnpm add -w tsup
 
-# Установка tsup глобально для extension-sdk
-RUN pnpm add -g tsup
-
-# Сборка всех пакетов
+# Сборка всех пакетов (CI=true должна отключить интерактивные запросы)
 RUN pnpm build
 
 # Создание production deployment в папку compiled
