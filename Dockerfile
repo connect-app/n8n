@@ -26,11 +26,8 @@ ENV CI=true
 # Установка зависимостей
 RUN pnpm install --frozen-lockfile
 
-# Установка зависимостей для extension-sdk (tsup для сборки, prettier для форматирования)
-RUN pnpm add -w tsup prettier
-
-# Сборка всех пакетов (CI=true должна отключить интерактивные запросы)
-RUN pnpm build
+# Сборка ТОЛЬКО пакета n8n (CLI + Editor-UI) без dev-зависимостей
+RUN pnpm turbo run build --filter=n8n
 
 # Создание production deployment в папку compiled
 RUN pnpm --filter=n8n --prod --legacy deploy --no-optional ./compiled
