@@ -43,5 +43,8 @@ fi
 # Ensure data directory exists
 mkdir -p /home/node/.n8n
 
-# Start n8n
-exec n8n start 
+# Change to app directory and start n8n
+cd /app
+
+# Start n8n from the built source
+exec node packages/cli/bin/n8n start 
