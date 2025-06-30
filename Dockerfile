@@ -23,6 +23,12 @@ COPY scripts ./scripts
 # Установка зависимостей
 RUN pnpm install --frozen-lockfile
 
+# Разрешение выполнения скриптов сборки для зависимостей
+RUN pnpm approve-builds
+
+# Установка tsup глобально для extension-sdk
+RUN pnpm add -g tsup
+
 # Сборка всех пакетов
 RUN pnpm build
 
