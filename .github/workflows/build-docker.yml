@@ -34,8 +34,8 @@ jobs:
         tags: |
           type=ref,event=branch
           type=sha,prefix={{branch}}-
-          type=raw,value=develop-latest,enable={{github.ref == 'refs/heads/develop'}}
-          type=raw,value=latest,enable={{github.ref == 'refs/heads/master'}}
+          type=raw,value=develop-latest,enable=${{ github.ref == 'refs/heads/develop' }}
+          type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
