@@ -8,9 +8,13 @@ RUN apk add --no-cache git python3 make g++
 
 WORKDIR /app
 
-# Копирование и установка зависимостей
+# Копирование файлов конфигурации и зависимостей
 COPY package*.json pnpm-*.yaml ./
+COPY patches ./patches
 COPY packages ./packages
+COPY scripts ./scripts
+
+# Установка зависимостей
 RUN pnpm install --frozen-lockfile
 
 # Сборка проекта
