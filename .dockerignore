@@ -17,3 +17,9 @@ docker/**/Dockerfile
 .vscode
 cypress
 test-workflows
+npm-debug.log
+.gitignore
+.nyc_output
+coverage
+.DS_Store
+*.log
