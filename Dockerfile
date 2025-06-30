@@ -26,8 +26,8 @@ ENV CI=true
 # Установка зависимостей
 RUN pnpm install --frozen-lockfile
 
-# Установка tsup для extension-sdk
-RUN pnpm add -w tsup
+# Установка зависимостей для extension-sdk (tsup для сборки, prettier для форматирования)
+RUN pnpm add -w tsup prettier
 
 # Сборка всех пакетов (CI=true должна отключить интерактивные запросы)
 RUN pnpm build
