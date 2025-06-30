@@ -6,8 +6,8 @@ FROM node:22-alpine AS builder
 # Установка pnpm
 RUN npm install -g pnpm@10
 
-# Установка системных зависимостей
-RUN apk add --no-cache git python3 make g++
+# Установка системных зависимостей (включая GraphicsMagick и tzdata для n8n)
+RUN apk add --no-cache git python3 make g++ graphicsmagick tzdata
 
 WORKDIR /app
 
@@ -39,6 +39,9 @@ RUN pnpm --filter=n8n --prod --legacy deploy --no-optional ./compiled
 # STAGE 2: Official N8N Runtime (адаптированный)
 # ==============================================================================
 FROM node:22-alpine AS runtime
+
+# Установка runtime зависимостей (GraphicsMagick для обработки изображений, tzdata для часовых поясов)
+RUN apk add --no-cache graphicsmagick tzdata
 
 ENV NODE_ENV=production
 ENV SHELL=/bin/sh
