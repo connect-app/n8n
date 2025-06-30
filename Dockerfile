@@ -8,6 +8,9 @@ RUN apk add --no-cache git python3 make g++
 
 WORKDIR /app
 
+# Установка переменной окружения для пропуска lefthook в Docker
+ENV DOCKER_BUILD=true
+
 # Копирование файлов конфигурации и зависимостей
 COPY package*.json pnpm-*.yaml ./
 COPY patches ./patches
