@@ -24,7 +24,7 @@ WORKDIR /app
 COPY . .
 
 # Install pnpm and build dependencies
-RUN npm install -g pnpm@9
+RUN npm install -g pnpm@latest
 
 # Install dependencies and build (following official build process)
 RUN pnpm install --frozen-lockfile
