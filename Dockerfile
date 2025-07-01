@@ -1,11 +1,11 @@
 ###############################################################################
-# ⬣  Stage 1 — Build (Node 22 + pnpm 10)                                      #
+# Stage 1 – Build (Node 22 + pnpm 10.2.1)                                     #
 ###############################################################################
 ARG NODE_VERSION=22
 ARG PNPM_VERSION=10.2.1
 FROM node:${NODE_VERSION}-alpine AS build
 
-# Системные библиотеки и dev-заголовки
+# Устанавливаем системные пакеты и dev-заголовки
 RUN apk add --no-cache \
       git openssh tzdata graphicsmagick \
       ca-certificates libc6-compat jq \
@@ -19,33 +19,36 @@ RUN apk add --no-cache \
 WORKDIR /usr/src/app
 COPY . .
 
-# Чтобы lefthook install не падал на prepare
+# Чтобы скрипт lefthook install отработал без ошибок
 RUN git init
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
+# Устанавливаем зависимости и собираем UI, core, nodes
 RUN pnpm install --frozen-lockfile \
  && pnpm run build
 
 ###############################################################################
-# ⬣  Stage 2 — Runtime (минимальный, entrypoint.sh в PID 1)                   #
+# Stage 2 – Runtime (минимальный образ)                                       #
 ###############################################################################
 FROM node:${NODE_VERSION}-alpine
 
-# Копируем всё из build-stage
+# Добавляем tini для корректного проксирования SIGTERM
+RUN apk add --no-cache tini
+
+# Копируем ICU, global-модули, собранное приложение и зависимости
 COPY --from=build /usr/local /usr/local
 COPY --from=build /usr/src/app /home/node/app
 
-# Кладём ваш entrypoint.sh в корень и делаем исполняемым
+# Копируем entrypoint и делаем его исполняемым под root
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Создаём пользователя и сразу переключаемся
+# Создаём непривилегированного пользователя и переключаемся на него
 RUN addgroup -S n8n && adduser -S -G n8n n8n
 USER n8n
-
 WORKDIR /home/node/app
 
-# Переменные окружения
+# Переменные окружения для работы n8n
 ENV NODE_ENV=production \
     NODE_ICU_DATA=/usr/local/lib/node_modules/full-icu \
     N8N_HOST=0.0.0.0 \
@@ -53,5 +56,5 @@ ENV NODE_ENV=production \
 
 EXPOSE 5678
 
-# Делаем entrypoint.sh PID 1 — он сам делает exec node ...
+# Запускаем entrypoint.sh как PID 1 (Heroku руками не оборачивает в /bin/sh)
 ENTRYPOINT ["/entrypoint.sh"]
