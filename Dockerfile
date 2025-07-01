@@ -5,55 +5,59 @@ ARG NODE_VERSION=22
 ARG PNPM_VERSION=10.2.1
 FROM node:${NODE_VERSION}-alpine AS build
 
-# Устанавливаем системные библиотеки, ICU, dev-заголовки
+# ── Системные библиотеки и dev-заголовки для нативных модулей ────────────────
 RUN apk add --no-cache \
       git openssh tzdata graphicsmagick \
       ca-certificates libc6-compat jq \
-      cairo-dev pango-dev pixman-dev fribidi-dev harfbuzz-dev giflib-dev libjpeg-turbo-dev libpng-dev \
+      cairo-dev pango-dev pixman-dev fribidi-dev harfbuzz-dev \
+      giflib-dev libjpeg-turbo-dev libpng-dev \
       vips-dev linux-headers \
- && apk add --no-cache --virtual build-deps python3 make g++ pkgconf \
- && npm i -g full-icu@1.5.0 npm@11.4.2 pnpm@${PNPM_VERSION}
+  && apk add --no-cache --virtual .build-deps \
+      python3 make g++ pkgconf \
+  && npm i -g full-icu@1.5.0 npm@11.4.2 pnpm@${PNPM_VERSION}
 
 WORKDIR /usr/src/app
 COPY . .
 
-# Инициализируем git, чтобы lefthook install не падал
+# Инициализируем git, чтобы lefthook install не падал на prepare
 RUN git init
 
-# Устанавливаем зависимости и собираем n8n
+# Устанавливаем зависимости и собираем весь monorepo
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN pnpm install --frozen-lockfile \
  && pnpm run build
 
 ###############################################################################
-# ⬣  Stage 2 — Runtime (минимальный образ)                                     #
+# ⬣  Stage 2 — Runtime (минимальный + tini для SIGTERM)                        #
 ###############################################################################
 FROM node:${NODE_VERSION}-alpine
 
-# Копируем ICU, шрифты и собранное приложение
-COPY --from=build /usr/local    /usr/local
-COPY --from=build /usr/src/app  /home/node/app
+# tini нужен для корректной обработки SIGTERM/forwarding Heroku сигналов
+RUN apk add --no-cache tini
 
-# Копируем entrypoint и даём ему права (от root)
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Копируем глобальные модули (full-icu, pnpm) и шрифты
+COPY --from=build /usr/local /usr/local
+# Копируем приложение (включая собранные пакеты и node_modules)
+COPY --from=build /usr/src/app /home/node/app
 
-# Создаём и переключаемся на пользователя n8n
+# Копируем ваш entrypoint и делаем его исполняемым от root
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Создаём system-пользователя n8n (с домашней папкой /home/n8n)
 RUN addgroup -S n8n && adduser -S -G n8n n8n
 
-# Создаём директорию для данных N8N и даём права пользователю n8n
-RUN mkdir -p /home/n8n/.n8n && chown -R n8n:n8n /home/n8n
-
+# Переключаемся на него
 USER n8n
 WORKDIR /home/node/app
 
-# Переменные окружения для продакшна
+# Переменные окружения для работы n8n
 ENV NODE_ENV=production \
     NODE_ICU_DATA=/usr/local/lib/node_modules/full-icu \
     N8N_HOST=0.0.0.0 \
-    N8N_PORT=5678 \
-    N8N_USER_FOLDER=/home/n8n/.n8n
+    N8N_PORT=5678
 
 EXPOSE 5678
 
-ENTRYPOINT ["/entrypoint.sh"]
+# Запускаем entrypoint через tini + sh
+ENTRYPOINT ["tini", "--", "sh", "/usr/local/bin/entrypoint.sh"]
