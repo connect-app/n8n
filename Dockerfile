@@ -43,8 +43,12 @@ COPY --from=build /usr/src/app /home/node/app
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Создаём непривилегированного пользователя и переключаемся на него
+# Создаём непривилегированного пользователя
 RUN addgroup -S n8n && adduser -S -G n8n n8n
+
+# Передаем права на entrypoint пользователю n8n
+RUN chown n8n:n8n /entrypoint.sh
+
 USER n8n
 WORKDIR /home/node/app
 
