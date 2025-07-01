@@ -5,12 +5,11 @@ ARG NODE_VERSION=22
 ARG PNPM_VERSION=10.2.1
 FROM node:${NODE_VERSION}-alpine AS build
 
-# ── Системные библиотеки и dev-заголовки для нативных модулей ────────────────
 RUN apk add --no-cache \
       git openssh tzdata graphicsmagick \
       ca-certificates libc6-compat jq \
-      cairo-dev pango-dev pixman-dev fribidi-dev harfbuzz-dev \
-      giflib-dev libjpeg-turbo-dev libpng-dev \
+      cairo-dev pango-dev pixman-dev fribidi-dev harfbuzz-dev giflib-dev \
+      libjpeg-turbo-dev libpng-dev \
       vips-dev linux-headers \
   && apk add --no-cache --virtual .build-deps \
       python3 make g++ pkgconf \
@@ -19,39 +18,37 @@ RUN apk add --no-cache \
 WORKDIR /usr/src/app
 COPY . .
 
-# Инициализируем git, чтобы lefthook install не падал на prepare
+# Чтобы lefthook install не падал на prepare
 RUN git init
 
-# Устанавливаем зависимости и собираем весь monorepo
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN pnpm install --frozen-lockfile \
  && pnpm run build
 
 ###############################################################################
-# ⬣  Stage 2 — Runtime (минимальный + tini для SIGTERM)                        #
+# ⬣  Stage 2 — Runtime (минимальный + tini для корректной обработки SIGTERM)  #
 ###############################################################################
 FROM node:${NODE_VERSION}-alpine
 
-# tini нужен для корректной обработки SIGTERM/forwarding Heroku сигналов
+# tini нужен для корректной передачи SIGTERM в приложение
 RUN apk add --no-cache tini
 
-# Копируем глобальные модули (full-icu, pnpm) и шрифты
+# Копируем ICU и глобальные модули (pnpm, full-icu)
 COPY --from=build /usr/local /usr/local
-# Копируем приложение (включая собранные пакеты и node_modules)
+# Копируем приложение и зависимости
 COPY --from=build /usr/src/app /home/node/app
 
-# Копируем ваш entrypoint и делаем его исполняемым от root
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# Копируем entrypoint в корень и делаем исполняемым
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-# Создаём system-пользователя n8n (с домашней папкой /home/n8n)
+# Создаём пользователя n8n и переключаемся на него
 RUN addgroup -S n8n && adduser -S -G n8n n8n
-
-# Переключаемся на него
 USER n8n
+
 WORKDIR /home/node/app
 
-# Переменные окружения для работы n8n
+# Переменные окружения для продакшна
 ENV NODE_ENV=production \
     NODE_ICU_DATA=/usr/local/lib/node_modules/full-icu \
     N8N_HOST=0.0.0.0 \
@@ -59,5 +56,5 @@ ENV NODE_ENV=production \
 
 EXPOSE 5678
 
-# Запускаем entrypoint через tini + sh
-ENTRYPOINT ["tini", "--", "sh", "/usr/local/bin/entrypoint.sh"]
+# Запускаем entrypoint через tini, регистрируя его как subreaper (-s)
+ENTRYPOINT ["tini", "-s", "--", "/entrypoint.sh"]
