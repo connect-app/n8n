@@ -40,7 +40,7 @@ COPY --from=build /usr/local /usr/local
 COPY --from=build /usr/src/app /home/node/app
 
 # Копируем entrypoint и делаем его исполняемым под root
-COPY entrypoint.sh /entrypoint.sh
+COPY ./entrypoint.sh /
 RUN chmod +x /entrypoint.sh
 
 # Создаём непривилегированного пользователя
@@ -61,4 +61,6 @@ ENV NODE_ENV=production \
 EXPOSE 5678
 
 # Запускаем entrypoint.sh как PID 1 (Heroku руками не оборачивает в /bin/sh)
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT []
+
+CMD ["/entrypoint.sh"]
