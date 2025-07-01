@@ -5,6 +5,7 @@ ARG NODE_VERSION=22
 ARG PNPM_VERSION=10.2.1
 FROM node:${NODE_VERSION}-alpine AS build
 
+# Системные библиотеки и dev-заголовки
 RUN apk add --no-cache \
       git openssh tzdata graphicsmagick \
       ca-certificates libc6-compat jq \
@@ -26,29 +27,25 @@ RUN pnpm install --frozen-lockfile \
  && pnpm run build
 
 ###############################################################################
-# ⬣  Stage 2 — Runtime (минимальный + tini для корректной обработки SIGTERM)  #
+# ⬣  Stage 2 — Runtime (минимальный, entrypoint.sh в PID 1)                   #
 ###############################################################################
 FROM node:${NODE_VERSION}-alpine
 
-# tini нужен для корректной передачи SIGTERM в приложение
-RUN apk add --no-cache tini
-
-# Копируем ICU и глобальные модули (pnpm, full-icu)
+# Копируем всё из build-stage
 COPY --from=build /usr/local /usr/local
-# Копируем приложение и зависимости
 COPY --from=build /usr/src/app /home/node/app
 
-# Копируем entrypoint в корень и делаем исполняемым
+# Кладём ваш entrypoint.sh в корень и делаем исполняемым
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Создаём пользователя n8n и переключаемся на него
+# Создаём пользователя и сразу переключаемся
 RUN addgroup -S n8n && adduser -S -G n8n n8n
 USER n8n
 
 WORKDIR /home/node/app
 
-# Переменные окружения для продакшна
+# Переменные окружения
 ENV NODE_ENV=production \
     NODE_ICU_DATA=/usr/local/lib/node_modules/full-icu \
     N8N_HOST=0.0.0.0 \
@@ -56,5 +53,5 @@ ENV NODE_ENV=production \
 
 EXPOSE 5678
 
-# Запускаем entrypoint через tini, регистрируя его как subreaper (-s)
-ENTRYPOINT ["tini", "-s", "--", "/entrypoint.sh"]
+# Делаем entrypoint.sh PID 1 — он сам делает exec node ...
+ENTRYPOINT ["/entrypoint.sh"]
