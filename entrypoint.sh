@@ -40,14 +40,14 @@ if [ -d /opt/custom-certificates ]; then
     c_rehash /opt/custom-certificates
 fi
 
-# Ensure data directory exists
-mkdir -p /home/node/.n8n
+# Ensure data directory exists (уже создана в Dockerfile, но на всякий случай)
+mkdir -p /home/n8n/.n8n
 
-# Start N8N (following official entrypoint pattern)
+# Start N8N (using direct path to CLI)
 if [ "$#" -gt 0 ]; then
     # Got started with arguments
-    exec n8n "$@"
+    exec node /home/node/app/packages/cli/bin/n8n "$@"
 else
     # Got started without arguments (n8n automatically adds 'start')
-    exec n8n
+    exec node /home/node/app/packages/cli/bin/n8n
 fi 
