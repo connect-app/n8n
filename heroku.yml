@@ -1,4 +1,7 @@
-# heroku.yml
 build:
   docker:
     web: Dockerfile
+
+run:
+  web:
+    - "/entrypoint.sh"
