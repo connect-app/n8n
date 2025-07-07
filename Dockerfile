@@ -14,7 +14,7 @@ RUN apk add --no-cache \
       vips-dev linux-headers \
   && apk add --no-cache --virtual .build-deps \
       python3 make g++ pkgconf \
-  && npm i -g full-icu@1.5.0 npm@11.4.2 pnpm@${PNPM_VERSION}
+  && npm i -g full-icu@1.5.0 npm@11.4.2 pnpm@${PNPM_VERSION} ajv@8.12.0 ajv-formats@2.1.1
 
 WORKDIR /usr/src/app
 COPY . .
