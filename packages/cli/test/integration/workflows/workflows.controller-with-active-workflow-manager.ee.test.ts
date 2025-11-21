@@ -1,7 +1,9 @@
-import { createTeamProject } from '@n8n/backend-test-utils';
-import { createWorkflowWithTrigger } from '@n8n/backend-test-utils';
-import { testDb } from '@n8n/backend-test-utils';
-import { mockInstance } from '@n8n/backend-test-utils';
+import {
+	createTeamProject,
+	testDb,
+	mockInstance,
+	createActiveWorkflow,
+} from '@n8n/backend-test-utils';
 import type { User } from '@n8n/db';
 
 import { Telemetry } from '@/telemetry';
@@ -19,7 +21,7 @@ const testServer = utils.setupTestServer({
 });
 
 beforeAll(async () => {
-	member = await createUser({ role: 'global:member' });
+	member = await createUser({ role: { slug: 'global:member' } });
 
 	await utils.initNodeTypes();
 });
@@ -37,7 +39,7 @@ describe('PUT /:workflowId/transfer', () => {
 		//
 		const destinationProject = await createTeamProject('Team Project', member);
 
-		const workflow = await createWorkflowWithTrigger({ active: true }, member);
+		const workflow = await createActiveWorkflow({}, member);
 
 		//
 		// ACT
