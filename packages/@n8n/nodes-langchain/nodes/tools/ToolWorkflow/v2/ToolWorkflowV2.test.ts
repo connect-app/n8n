@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/dot-notation */ // Disabled to allow access to private methods
 import { DynamicTool } from '@langchain/core/tools';
 import { ApplicationError, NodeOperationError } from 'n8n-workflow';
 import type {
@@ -136,6 +135,35 @@ describe('WorkflowTool::WorkflowToolService', () => {
 				runIndex: 1,
 				inputData: [[{ json: { query: 'another query' } }]],
 			});
+		});
+
+		it('returns un-stringified data if manualLogging is false (meaning it was called from the engine)', async () => {
+			const TEST_RESPONSE = { msg: 'test response' };
+
+			const mockExecuteWorkflowResponse: ExecuteWorkflowData = {
+				data: [[{ json: TEST_RESPONSE }]],
+				executionId: 'test-execution',
+			};
+
+			jest.spyOn(context, 'executeWorkflow').mockResolvedValueOnce(mockExecuteWorkflowResponse);
+			jest.spyOn(context, 'getNodeParameter').mockReturnValue('database');
+			jest.spyOn(context, 'getWorkflowDataProxy').mockReturnValue({
+				$execution: { id: 'exec-id' },
+				$workflow: { id: 'workflow-id' },
+			} as unknown as IWorkflowDataProxyData);
+
+			const tool = await service.createTool({
+				ctx: context,
+				name: 'Test Tool',
+				description: 'Test Description',
+				itemIndex: 0,
+				manualLogging: false,
+			});
+
+			// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+			const result = await tool.func('test query');
+
+			expect(result).toEqual([{ json: TEST_RESPONSE }]);
 		});
 
 		it('should handle errors during tool execution', async () => {

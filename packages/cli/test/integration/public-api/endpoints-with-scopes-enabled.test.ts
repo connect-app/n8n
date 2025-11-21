@@ -1,15 +1,20 @@
 import type { CredentialPayload } from '@n8n/backend-test-utils';
-import { createTeamProject, getProjectByNameOrFail } from '@n8n/backend-test-utils';
-import { createWorkflow } from '@n8n/backend-test-utils';
-import { randomName } from '@n8n/backend-test-utils';
-import { testDb } from '@n8n/backend-test-utils';
+import {
+	createTeamProject,
+	getProjectByNameOrFail,
+	createWorkflow,
+	randomName,
+	testDb,
+} from '@n8n/backend-test-utils';
 import type { TagEntity, Variables } from '@n8n/db';
-import { ApiKeyRepository } from '@n8n/db';
-import { CredentialsRepository } from '@n8n/db';
-import { ProjectRepository } from '@n8n/db';
-import { TagRepository } from '@n8n/db';
-import { SharedCredentialsRepository } from '@n8n/db';
-import { SharedWorkflowRepository } from '@n8n/db';
+import {
+	ApiKeyRepository,
+	CredentialsRepository,
+	ProjectRepository,
+	TagRepository,
+	SharedCredentialsRepository,
+	SharedWorkflowRepository,
+} from '@n8n/db';
 import { Container } from '@n8n/di';
 import { getOwnerOnlyApiKeyScopes } from '@n8n/permissions';
 import { randomString } from 'n8n-workflow';
@@ -217,7 +222,7 @@ describe('Public API endpoints with feat:apiKeyScopes enabled', () => {
 					expect(returnedUser.id).toBe(storedUser.id);
 					expect(returnedUser.email).toBe(storedUser.email);
 					expect(returnedUser.email).toBe(payloadUser.email);
-					expect(storedUser.role).toBe(payloadUser.role);
+					expect(storedUser.role.slug).toBe(payloadUser.role);
 				});
 
 				test('should fail to create user when API key doesn\'t have "user:create" scope', async () => {
@@ -262,7 +267,7 @@ describe('Public API endpoints with feat:apiKeyScopes enabled', () => {
 					 */
 					expect(response.status).toBe(204);
 					const storedUser = await getUserById(member.id);
-					expect(storedUser.role).toBe(payload.newRoleName);
+					expect(storedUser.role.slug).toBe(payload.newRoleName);
 				});
 
 				test('should fail to change role when API key doesn\'t have "user:changeRole" scope', async () => {
@@ -1265,6 +1270,8 @@ describe('Public API endpoints with feat:apiKeyScopes enabled', () => {
 							executionTimeout: 3600,
 							timezone: 'America/New_York',
 							executionOrder: 'v1',
+							callerPolicy: 'workflowsFromSameOwner',
+							availableInMCP: false,
 						},
 					};
 
@@ -1546,6 +1553,8 @@ describe('Public API endpoints with feat:apiKeyScopes enabled', () => {
 							saveDataSuccessExecution: 'all',
 							executionTimeout: 3600,
 							timezone: 'America/New_York',
+							callerPolicy: 'workflowsFromSameOwner',
+							availableInMCP: false,
 						},
 					};
 

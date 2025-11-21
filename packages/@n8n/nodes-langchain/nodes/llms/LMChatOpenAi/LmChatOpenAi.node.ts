@@ -1,22 +1,63 @@
-/* eslint-disable n8n-nodes-base/node-dirname-against-convention */
-
-import { ChatOpenAI, type ClientOptions } from '@langchain/openai';
+import { ChatOpenAI, type ChatOpenAIFields, type ClientOptions } from '@langchain/openai';
+import pick from 'lodash/pick';
 import {
 	NodeConnectionTypes,
-	NodeOperationError,
+	type INodeProperties,
+	type IDataObject,
 	type INodeType,
 	type INodeTypeDescription,
 	type ISupplyDataFunctions,
 	type SupplyData,
 } from 'n8n-workflow';
 
-import { getHttpProxyAgent } from '@utils/httpProxyAgent';
+import { getProxyAgent } from '@utils/httpProxyAgent';
 import { getConnectionHintNoticeField } from '@utils/sharedFields';
 
-import { searchModels } from './methods/loadModels';
 import { openAiFailedAttemptHandler } from '../../vendors/OpenAi/helpers/error-handling';
 import { makeN8nLlmFailedAttemptHandler } from '../n8nLlmFailedAttemptHandler';
 import { N8nLlmTracing } from '../N8nLlmTracing';
+import { formatBuiltInTools, prepareAdditionalResponsesParams } from './common';
+import { searchModels } from './methods/loadModels';
+import type { ModelOptions } from './types';
+
+const INCLUDE_JSON_WARNING: INodeProperties = {
+	displayName:
+		'If using JSON response format, you must include word "json" in the prompt in your chain or agent. Also, make sure to select latest models released post November 2023.',
+	name: 'notice',
+	type: 'notice',
+	default: '',
+};
+
+const completionsResponseFormat: INodeProperties = {
+	displayName: 'Response Format',
+	name: 'responseFormat',
+	default: 'text',
+	type: 'options',
+	options: [
+		{
+			name: 'Text',
+			value: 'text',
+			description: 'Regular text response',
+		},
+		{
+			name: 'JSON',
+			value: 'json_object',
+			description:
+				'Enables JSON mode, which should guarantee the message the model generates is valid JSON',
+		},
+	],
+};
+
+const jsonSchemaExample = `{
+  "type": "object",
+  "properties": {
+    "message": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": ["message"]
+}`;
 
 export class LmChatOpenAi implements INodeType {
 	methods = {
@@ -27,7 +68,7 @@ export class LmChatOpenAi implements INodeType {
 
 	description: INodeTypeDescription = {
 		displayName: 'OpenAI Chat Model',
-		// eslint-disable-next-line n8n-nodes-base/node-class-description-name-miscased
+
 		name: 'lmChatOpenAi',
 		icon: { light: 'file:openAiLight.svg', dark: 'file:openAiLight.dark.svg' },
 		group: ['transform'],
@@ -50,9 +91,9 @@ export class LmChatOpenAi implements INodeType {
 				],
 			},
 		},
-		// eslint-disable-next-line n8n-nodes-base/node-class-description-inputs-wrong-regular-node
+
 		inputs: [],
-		// eslint-disable-next-line n8n-nodes-base/node-class-description-outputs-wrong
+
 		outputs: [NodeConnectionTypes.AiLanguageModel],
 		outputNames: ['Model'],
 		credentials: [
@@ -69,26 +110,18 @@ export class LmChatOpenAi implements INodeType {
 		properties: [
 			getConnectionHintNoticeField([NodeConnectionTypes.AiChain, NodeConnectionTypes.AiAgent]),
 			{
-				displayName:
-					'If using JSON response format, you must include word "json" in the prompt in your chain or agent. Also, make sure to select latest models released post November 2023.',
-				name: 'notice',
-				type: 'notice',
-				default: '',
+				...INCLUDE_JSON_WARNING,
 				displayOptions: {
 					show: {
-						responseFormat: ['json_object'],
+						'/options.responseFormat': ['json_object'],
 					},
 				},
 			},
 			{
-				displayName:
-					'When using JSON Schema response format, make sure to select latest models (GPT-4o, GPT-4o-mini, GPT-4 Turbo) that support structured outputs.',
-				name: 'jsonSchemaNotice',
-				type: 'notice',
-				default: '',
+				...INCLUDE_JSON_WARNING,
 				displayOptions: {
 					show: {
-						responseFormat: ['json_schema'],
+						'/options.textFormat.textOptions.type': ['json_object'],
 					},
 				},
 			},
@@ -202,41 +235,118 @@ export class LmChatOpenAi implements INodeType {
 				},
 			},
 			{
-				displayName: 'Response Format',
-				name: 'responseFormat',
-				type: 'options',
-				default: 'text',
-				options: [
-					{
-						name: 'Text',
-						value: 'text',
-						description: 'Standard text response format',
-					},
-					{
-						name: 'JSON Object',
-						value: 'json_object',
-						description: 'Return response as a JSON object',
-					},
-					{
-						name: 'JSON Schema',
-						value: 'json_schema',
-						description: 'Return response conforming to a specific JSON Schema',
-					},
-				],
-				description: 'Choose the response format for the model output',
-			},
-			{
-				displayName: 'JSON Schema',
-				name: 'jsonSchema',
-				type: 'json',
-				default:
-					'{\n  "type": "object",\n  "properties": {\n    "name": {\n      "type": "string"\n    },\n    "age": {\n      "type": "number"\n    }\n  },\n  "required": ["name"]\n}',
-				description: 'Define the structure of the JSON response. Must be a valid JSON Schema.',
-				placeholder: 'Enter valid JSON Schema...',
-				required: true,
+				displayName: 'Use Responses API',
+				name: 'responsesApiEnabled',
+				type: 'boolean',
+				default: true,
+				description:
+					'Whether to use the Responses API to generate the response. <a href="https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.lmchatopenai/#use-responses-api">Learn more</a>.',
 				displayOptions: {
 					show: {
-						responseFormat: ['json_schema'],
+						'@version': [{ _cnd: { gte: 1.3 } }],
+					},
+				},
+			},
+			{
+				displayName: 'Built-in Tools',
+				name: 'builtInTools',
+				placeholder: 'Add Built-in Tool',
+				type: 'collection',
+				default: {},
+				options: [
+					{
+						displayName: 'Web Search',
+						name: 'webSearch',
+						type: 'collection',
+						default: { searchContextSize: 'medium' },
+						options: [
+							{
+								displayName: 'Search Context Size',
+								name: 'searchContextSize',
+								type: 'options',
+								default: 'medium',
+								description:
+									'High level guidance for the amount of context window space to use for the search',
+								options: [
+									{ name: 'Low', value: 'low' },
+									{ name: 'Medium', value: 'medium' },
+									{ name: 'High', value: 'high' },
+								],
+							},
+							{
+								displayName: 'Web Search Allowed Domains',
+								name: 'allowedDomains',
+								type: 'string',
+								default: '',
+								description:
+									'Comma-separated list of domains to search. Only domains in this list will be searched.',
+								placeholder: 'e.g. google.com, wikipedia.org',
+							},
+							{
+								displayName: 'Country',
+								name: 'country',
+								type: 'string',
+								default: '',
+								placeholder: 'e.g. US, GB',
+							},
+							{
+								displayName: 'City',
+								name: 'city',
+								type: 'string',
+								default: '',
+								placeholder: 'e.g. New York, London',
+							},
+							{
+								displayName: 'Region',
+								name: 'region',
+								type: 'string',
+								default: '',
+								placeholder: 'e.g. New York, London',
+							},
+						],
+					},
+					{
+						displayName: 'File Search',
+						name: 'fileSearch',
+						type: 'collection',
+						default: { vectorStoreIds: '[]' },
+						options: [
+							{
+								displayName: 'Vector Store IDs',
+								name: 'vectorStoreIds',
+								description:
+									'The vector store IDs to use for the file search. Vector stores are managed via OpenAI Dashboard. <a href="https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.lmchatopenai/#built-in-tools">Learn more</a>.',
+								type: 'json',
+								default: '[]',
+								required: true,
+							},
+							{
+								displayName: 'Filters',
+								name: 'filters',
+								type: 'json',
+								default: '{}',
+							},
+							{
+								displayName: 'Max Results',
+								name: 'maxResults',
+								type: 'number',
+								default: 1,
+								typeOptions: { minValue: 1, maxValue: 50 },
+							},
+						],
+					},
+					{
+						displayName: 'Code Interpreter',
+						name: 'codeInterpreter',
+						type: 'boolean',
+						default: true,
+						description: 'Whether to allow the model to execute code in a sandboxed environment',
+					},
+				],
+				displayOptions: {
+					show: {
+						'@version': [{ _cnd: { gte: 1.3 } }],
+						'/responsesApiEnabled': [true],
 					},
 				},
 			},
@@ -261,14 +371,6 @@ export class LmChatOpenAi implements INodeType {
 						},
 					},
 					{
-						displayName: 'Streaming',
-						name: 'streaming',
-						type: 'boolean',
-						default: false,
-						description:
-							'Enable streaming mode for real-time response generation. Disabled by default for compatibility.',
-					},
-					{
 						displayName: 'Frequency Penalty',
 						name: 'frequencyPenalty',
 						default: 0,
@@ -286,6 +388,128 @@ export class LmChatOpenAi implements INodeType {
 						type: 'number',
 						typeOptions: {
 							maxValue: 32768,
+						},
+					},
+					{
+						...completionsResponseFormat,
+						displayOptions: {
+							show: {
+								'@version': [{ _cnd: { lt: 1.3 } }],
+							},
+						},
+					},
+					{
+						...completionsResponseFormat,
+						displayOptions: {
+							show: {
+								'@version': [{ _cnd: { gte: 1.3 } }],
+								'/responsesApiEnabled': [false],
+							},
+						},
+					},
+					{
+						displayName: 'Response Format',
+						name: 'textFormat',
+						type: 'fixedCollection',
+						default: { textOptions: [{ type: 'text' }] },
+						options: [
+							{
+								displayName: 'Text',
+								name: 'textOptions',
+								values: [
+									{
+										displayName: 'Type',
+										name: 'type',
+										type: 'options',
+										default: '',
+										options: [
+											{ name: 'Text', value: 'text' },
+											// eslint-disable-next-line n8n-nodes-base/node-param-display-name-miscased
+											{ name: 'JSON Schema (recommended)', value: 'json_schema' },
+											{ name: 'JSON Object', value: 'json_object' },
+										],
+									},
+									{
+										displayName: 'Verbosity',
+										name: 'verbosity',
+										type: 'options',
+										default: 'medium',
+										options: [
+											{ name: 'Low', value: 'low' },
+											{ name: 'Medium', value: 'medium' },
+											{ name: 'High', value: 'high' },
+										],
+									},
+									{
+										displayName: 'Name',
+										name: 'name',
+										type: 'string',
+										default: 'my_schema',
+										description:
+											'The name of the response format. Must be a-z, A-Z, 0-9, or contain underscores and dashes, with a maximum length of 64.',
+										displayOptions: {
+											show: {
+												type: ['json_schema'],
+											},
+										},
+									},
+									{
+										displayName:
+											'All properties in the schema must be set to "required", when using "strict" mode.',
+										name: 'requiredNotice',
+										type: 'notice',
+										default: '',
+										displayOptions: {
+											show: {
+												strict: [true],
+											},
+										},
+									},
+									{
+										displayName: 'Schema',
+										name: 'schema',
+										type: 'json',
+										default: jsonSchemaExample,
+										description: 'The schema of the response format',
+										displayOptions: {
+											show: {
+												type: ['json_schema'],
+											},
+										},
+									},
+									{
+										displayName: 'Description',
+										name: 'description',
+										type: 'string',
+										default: '',
+										description: 'The description of the response format',
+										displayOptions: {
+											show: {
+												type: ['json_schema'],
+											},
+										},
+									},
+									{
+										displayName: 'Strict',
+										name: 'strict',
+										type: 'boolean',
+										default: false,
+										description:
+											'Whether to require that the AI will always generate responses that match the provided JSON Schema',
+										displayOptions: {
+											show: {
+												type: ['json_schema'],
+											},
+										},
+									},
+								],
+							},
+						],
+						displayOptions: {
+							show: {
+								'@version': [{ _cnd: { gte: 1.3 } }],
+								'/responsesApiEnabled': [true],
+							},
 						},
 					},
 					{
@@ -333,8 +557,8 @@ export class LmChatOpenAi implements INodeType {
 						],
 						displayOptions: {
 							show: {
-								// reasoning_effort is only available on o1, o1-versioned, or on o3-mini and beyond. Not on o1-mini or other GPT-models.
-								'/model': [{ _cnd: { regex: '(^o1([-\\d]+)?$)|(^o[3-9].*)' } }],
+								// reasoning_effort is only available on o1, o1-versioned, or on o3-mini and beyond, and gpt-5 models. Not on o1-mini or other GPT-models.
+								'/model': [{ _cnd: { regex: '(^o1([-\\d]+)?$)|(^o[3-9].*)|(^gpt-5.*)' } }],
 							},
 						},
 					},
@@ -361,6 +585,142 @@ export class LmChatOpenAi implements INodeType {
 							'Controls diversity via nucleus sampling: 0.5 means half of all likelihood-weighted options are considered. We generally recommend altering this or temperature but not both.',
 						type: 'number',
 					},
+					{
+						displayName: 'Conversation ID',
+						name: 'conversationId',
+						default: '',
+						description:
+							'The conversation that this response belongs to. Input items and output items from this response are automatically added to this conversation after this response completes.',
+						type: 'string',
+						displayOptions: {
+							show: {
+								'@version': [{ _cnd: { gte: 1.3 } }],
+								'/responsesApiEnabled': [true],
+							},
+						},
+					},
+					{
+						displayName: 'Prompt Cache Key',
+						name: 'promptCacheKey',
+						type: 'string',
+						default: '',
+						description:
+							'Used by OpenAI to cache responses for similar requests to optimize your cache hit rates',
+						displayOptions: {
+							show: {
+								'@version': [{ _cnd: { gte: 1.3 } }],
+								'/responsesApiEnabled': [true],
+							},
+						},
+					},
+					{
+						displayName: 'Safety Identifier',
+						name: 'safetyIdentifier',
+						type: 'string',
+						default: '',
+						description:
+							"A stable identifier used to help detect users of your application that may be violating OpenAI's usage policies. The IDs should be a string that uniquely identifies each user.",
+						displayOptions: {
+							show: {
+								'@version': [{ _cnd: { gte: 1.3 } }],
+								'/responsesApiEnabled': [true],
+							},
+						},
+					},
+					{
+						displayName: 'Service Tier',
+						name: 'serviceTier',
+						type: 'options',
+						default: 'auto',
+						description: 'The service tier to use for the request',
+						options: [
+							{ name: 'Auto', value: 'auto' },
+							{ name: 'Flex', value: 'flex' },
+							{ name: 'Default', value: 'default' },
+							{ name: 'Priority', value: 'priority' },
+						],
+						displayOptions: {
+							show: {
+								'@version': [{ _cnd: { gte: 1.3 } }],
+								'/responsesApiEnabled': [true],
+							},
+						},
+					},
+					{
+						displayName: 'Metadata',
+						name: 'metadata',
+						type: 'json',
+						description:
+							'Set of 16 key-value pairs that can be attached to an object. This can be useful for storing additional information about the object in a structured format, and querying for objects via API or the dashboard. Keys are strings with a maximum length of 64 characters. Values are strings with a maximum length of 512 characters.',
+						default: '{}',
+						displayOptions: {
+							show: {
+								'@version': [{ _cnd: { gte: 1.3 } }],
+								'/responsesApiEnabled': [true],
+							},
+						},
+					},
+					{
+						displayName: 'Top Logprobs',
+						name: 'topLogprobs',
+						type: 'number',
+						default: 0,
+						description:
+							'An integer between 0 and 20 specifying the number of most likely tokens to return at each token position, each with an associated log probability',
+						typeOptions: {
+							minValue: 0,
+							maxValue: 20,
+						},
+						displayOptions: {
+							show: {
+								'@version': [{ _cnd: { gte: 1.3 } }],
+								'/responsesApiEnabled': [true],
+							},
+						},
+					},
+					{
+						displayName: 'Prompt',
+						name: 'promptConfig',
+						type: 'fixedCollection',
+						description:
+							'Configure the reusable prompt template configured via OpenAI Dashboard. <a href="https://platform.openai.com/docs/guides/prompt-engineering#reusable-prompts">Learn more</a>.',
+						default: { promptOptions: [{ promptId: '' }] },
+						options: [
+							{
+								displayName: 'Prompt',
+								name: 'promptOptions',
+								values: [
+									{
+										displayName: 'Prompt ID',
+										name: 'promptId',
+										type: 'string',
+										default: '',
+										description: 'The unique identifier of the prompt template to use',
+									},
+									{
+										displayName: 'Version',
+										name: 'version',
+										type: 'string',
+										default: '',
+										description: 'Optional version of the prompt template',
+									},
+									{
+										displayName: 'Variables',
+										name: 'variables',
+										type: 'json',
+										default: '{}',
+										description: 'Variables to be substituted into the prompt template',
+									},
+								],
+							},
+						],
+						displayOptions: {
+							show: {
+								'@version': [{ _cnd: { gte: 1.3 } }],
+								'/responsesApiEnabled': [true],
+							},
+						},
+					},
 				],
 			},
 		],
@@ -375,116 +735,86 @@ export class LmChatOpenAi implements INodeType {
 				? (this.getNodeParameter('model.value', itemIndex) as string)
 				: (this.getNodeParameter('model', itemIndex) as string);
 
-		const responseFormat = this.getNodeParameter('responseFormat', itemIndex, 'text') as
-			| 'text'
-			| 'json_object'
-			| 'json_schema';
-		const jsonSchema =
-			responseFormat === 'json_schema'
-				? (this.getNodeParameter('jsonSchema', itemIndex, '') as string)
-				: undefined;
+		const responsesApiEnabled = this.getNodeParameter('responsesApiEnabled', itemIndex, false);
 
-		const options = this.getNodeParameter('options', itemIndex, {}) as {
-			baseURL?: string;
-			frequencyPenalty?: number;
-			maxTokens?: number;
-			maxRetries: number;
-			timeout: number;
-			presencePenalty?: number;
-			temperature?: number;
-			topP?: number;
-			reasoningEffort?: 'low' | 'medium' | 'high';
-			streaming?: boolean;
-		};
+		const options = this.getNodeParameter('options', itemIndex, {}) as ModelOptions;
 
-		const configuration: ClientOptions = {
-			httpAgent: getHttpProxyAgent(),
-		};
+		const configuration: ClientOptions = {};
+
 		if (options.baseURL) {
 			configuration.baseURL = options.baseURL;
 		} else if (credentials.url) {
 			configuration.baseURL = credentials.url as string;
 		}
 
-		// Helper function to get response format
-		const getResponseFormat = (
-			format: typeof responseFormat,
-			schema?: string,
-		): object | undefined => {
-			if (!format || format === 'text') return undefined;
-
-			if (format === 'json_object') {
-				return { type: 'json_object' };
-			}
-
-			if (format === 'json_schema') {
-				if (!schema) {
-					throw new NodeOperationError(
-						this.getNode(),
-						'JSON Schema is required when response format is "json_schema"',
-					);
-				}
-				try {
-					const parsedSchema = JSON.parse(schema);
-
-					// Extract schema name and actual schema
-					let schemaName = 'custom_schema'; // default fallback
-					let actualSchema = parsedSchema;
-
-					// If the parsed schema has 'name' and 'schema' properties, use them
-					if (parsedSchema.name && parsedSchema.schema) {
-						schemaName = parsedSchema.name;
-						actualSchema = parsedSchema.schema;
-					}
-
-					// Basic validation of JSON Schema structure
-					if (!actualSchema.type) {
-						throw new Error('JSON Schema must have a "type" field');
-					}
-
-					return {
-						type: 'json_schema',
-						json_schema: {
-							name: schemaName,
-							schema: actualSchema,
-						},
-					};
-				} catch (error) {
-					throw new NodeOperationError(this.getNode(), `Invalid JSON Schema: ${error.message}`);
-				}
-			}
-
-			// Default to text format
-			return undefined;
-		};
-
-		// Extra options to send to OpenAI, that are not directly supported by LangChain
-		const modelKwargs: {
-			response_format?: object;
-			reasoning_effort?: 'low' | 'medium' | 'high';
-		} = {};
-
-		// Handle response format including JSON Schema
-		const responseFormatConfig = getResponseFormat(responseFormat, jsonSchema);
-		if (responseFormatConfig) {
-			modelKwargs.response_format = responseFormatConfig;
+		if (configuration.baseURL) {
+			configuration.fetchOptions = {
+				dispatcher: getProxyAgent(configuration.baseURL ?? 'https://api.openai.com/v1'),
+			};
+		}
+		if (
+			credentials.header &&
+			typeof credentials.headerName === 'string' &&
+			credentials.headerName &&
+			typeof credentials.headerValue === 'string'
+		) {
+			configuration.defaultHeaders = {
+				[credentials.headerName]: credentials.headerValue,
+			};
 		}
 
-		if (options.reasoningEffort && ['low', 'medium', 'high'].includes(options.reasoningEffort))
-			modelKwargs.reasoning_effort = options.reasoningEffort;
+		// Extra options to send to OpenAI, that are not directly supported by LangChain
+		const modelKwargs: Record<string, unknown> = {};
+		if (responsesApiEnabled) {
+			const kwargs = prepareAdditionalResponsesParams(options);
+			Object.assign(modelKwargs, kwargs);
+		} else {
+			if (options.responseFormat) modelKwargs.response_format = { type: options.responseFormat };
+			if (options.reasoningEffort && ['low', 'medium', 'high'].includes(options.reasoningEffort)) {
+				modelKwargs.reasoning_effort = options.reasoningEffort;
+			}
+		}
 
-		const model = new ChatOpenAI({
-			openAIApiKey: credentials.apiKey as string,
+		const includedOptions = pick(options, [
+			'frequencyPenalty',
+			'maxTokens',
+			'presencePenalty',
+			'temperature',
+			'topP',
+			'baseURL',
+		]);
+
+		const fields: ChatOpenAIFields = {
+			apiKey: credentials.apiKey as string,
 			model: modelName,
-			streaming: options.streaming ?? false,
-			...options,
+			...includedOptions,
 			timeout: options.timeout ?? 60000,
 			maxRetries: options.maxRetries ?? 2,
 			configuration,
 			callbacks: [new N8nLlmTracing(this)],
 			modelKwargs,
 			onFailedAttempt: makeN8nLlmFailedAttemptHandler(this, openAiFailedAttemptHandler),
-		});
+		};
+
+		// by default ChatOpenAI can switch to responses API automatically, so force it only on 1.3 and above to keep backwards compatibility
+		if (responsesApiEnabled) {
+			fields.useResponsesApi = true;
+		}
+
+		const model = new ChatOpenAI(fields);
+
+		if (responsesApiEnabled) {
+			const tools = formatBuiltInTools(
+				this.getNodeParameter('builtInTools', itemIndex, {}) as IDataObject,
+			);
+			// pass tools to the model metadata, ToolAgent will use it to create agent configuration
+			if (tools.length) {
+				model.metadata = {
+					...model.metadata,
+					tools,
+				};
+			}
+		}
 
 		return {
 			response: model,

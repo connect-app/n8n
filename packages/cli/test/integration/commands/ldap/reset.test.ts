@@ -3,13 +3,15 @@ import {
 	findProject,
 	getPersonalProject,
 	mockInstance,
+	createWorkflow,
+	randomCredentialPayload,
 } from '@n8n/backend-test-utils';
-import { createWorkflow } from '@n8n/backend-test-utils';
-import { randomCredentialPayload } from '@n8n/backend-test-utils';
-import { CredentialsRepository } from '@n8n/db';
-import { SharedCredentialsRepository } from '@n8n/db';
-import { SharedWorkflowRepository } from '@n8n/db';
-import { WorkflowRepository } from '@n8n/db';
+import {
+	CredentialsRepository,
+	SharedCredentialsRepository,
+	SharedWorkflowRepository,
+	WorkflowRepository,
+} from '@n8n/db';
 import { Container } from '@n8n/di';
 import { EntityNotFoundError } from '@n8n/typeorm';
 import { v4 as uuid } from 'uuid';
@@ -59,7 +61,7 @@ describe('--deleteWorkflowsAndCredentials', () => {
 		//
 		// ARRANGE
 		//
-		const member = await createLdapUser({ role: 'global:member' }, uuid());
+		const member = await createLdapUser({ role: { slug: 'global:member' } }, uuid());
 		const memberProject = await getPersonalProject(member);
 		const workflow = await createWorkflow({}, member);
 		const credential = await saveCredential(randomCredentialPayload(), {
@@ -164,7 +166,7 @@ describe('--userId', () => {
 		//
 		// ARRANGE
 		//
-		const member = await createLdapUser({ role: 'global:member' }, uuid());
+		const member = await createLdapUser({ role: { slug: 'global:member' } }, uuid());
 
 		await expect(command.run([`--userId=${member.id}`])).rejects.toThrowError(
 			`Can't migrate workflows and credentials to the user with the ID ${member.id}. That user was created via LDAP and will be deleted as well.`,
@@ -175,7 +177,7 @@ describe('--userId', () => {
 		//
 		// ARRANGE
 		//
-		const member = await createLdapUser({ role: 'global:member' }, uuid());
+		const member = await createLdapUser({ role: { slug: 'global:member' } }, uuid());
 		const memberProject = await getPersonalProject(member);
 		const workflow = await createWorkflow({}, member);
 		const credential = await saveCredential(randomCredentialPayload(), {
@@ -240,7 +242,7 @@ describe('--projectId', () => {
 		//
 		// ARRANGE
 		//
-		const member = await createLdapUser({ role: 'global:member' }, uuid());
+		const member = await createLdapUser({ role: { slug: 'global:member' } }, uuid());
 		const memberProject = await getPersonalProject(member);
 
 		await expect(command.run([`--projectId=${memberProject.id}`])).rejects.toThrowError(
@@ -252,7 +254,7 @@ describe('--projectId', () => {
 		//
 		// ARRANGE
 		//
-		const member = await createLdapUser({ role: 'global:member' }, uuid());
+		const member = await createLdapUser({ role: { slug: 'global:member' } }, uuid());
 		const memberProject = await getPersonalProject(member);
 		const workflow = await createWorkflow({}, member);
 		const credential = await saveCredential(randomCredentialPayload(), {
@@ -308,7 +310,7 @@ describe('--projectId', () => {
 		//
 		// ARRANGE
 		//
-		const member = await createLdapUser({ role: 'global:member' }, uuid());
+		const member = await createLdapUser({ role: { slug: 'global:member' } }, uuid());
 		const memberProject = await getPersonalProject(member);
 		const workflow = await createWorkflow({}, member);
 		const credential = await saveCredential(randomCredentialPayload(), {

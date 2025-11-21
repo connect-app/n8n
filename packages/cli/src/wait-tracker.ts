@@ -8,6 +8,7 @@ import { UnexpectedError, type IWorkflowExecutionDataProcess } from 'n8n-workflo
 import { ActiveExecutions } from '@/active-executions';
 import { OwnershipService } from '@/services/ownership.service';
 import { WorkflowRunner } from '@/workflow-runner';
+import { shouldRestartParentExecution } from './workflow-helpers';
 
 @Service()
 export class WaitTracker {
@@ -119,13 +120,14 @@ export class WaitTracker {
 			workflowData: fullExecutionData.workflowData,
 			projectId: project.id,
 			pushRef: fullExecutionData.data.pushRef,
+			startedAt: fullExecutionData.startedAt,
 		};
 
 		// Start the execution again
 		await this.workflowRunner.run(data, false, false, executionId);
 
 		const { parentExecution } = fullExecutionData.data;
-		if (parentExecution) {
+		if (shouldRestartParentExecution(parentExecution)) {
 			// on child execution completion, resume parent execution
 			void this.activeExecutions.getPostExecutePromise(executionId).then(() => {
 				void this.startExecution(parentExecution.executionId);

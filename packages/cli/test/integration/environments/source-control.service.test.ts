@@ -1,18 +1,21 @@
 import type { SourceControlledFile } from '@n8n/api-types';
-import { createTeamProject } from '@n8n/backend-test-utils';
-import { createWorkflow } from '@n8n/backend-test-utils';
-import { testDb } from '@n8n/backend-test-utils';
+import { createTeamProject, createWorkflow, testDb } from '@n8n/backend-test-utils';
 import {
 	CredentialsEntity,
 	type Folder,
-	FolderRepository,
+	GLOBAL_ADMIN_ROLE,
+	GLOBAL_MEMBER_ROLE,
+	GLOBAL_OWNER_ROLE,
 	Project,
 	type TagEntity,
-	TagRepository,
 	type User,
 	WorkflowEntity,
 } from '@n8n/db';
 import { Container } from '@n8n/di';
+import { createCredentials } from '@test-integration/db/credentials';
+import { createFolder } from '@test-integration/db/folders';
+import { assignTagToWorkflow, createTag, updateTag } from '@test-integration/db/tags';
+import { createUser } from '@test-integration/db/users';
 import * as fastGlob from 'fast-glob';
 import { mock } from 'jest-mock-extended';
 import { Cipher } from 'n8n-core';
@@ -29,6 +32,8 @@ import { SourceControlExportService } from '@/environments.ee/source-control/sou
 import type { SourceControlGitService } from '@/environments.ee/source-control/source-control-git.service.ee';
 import { SourceControlImportService } from '@/environments.ee/source-control/source-control-import.service.ee';
 import { SourceControlPreferencesService } from '@/environments.ee/source-control/source-control-preferences.service.ee';
+import { SourceControlScopedService } from '@/environments.ee/source-control/source-control-scoped.service';
+import { SourceControlStatusService } from '@/environments.ee/source-control/source-control-status.service.ee';
 import { SourceControlService } from '@/environments.ee/source-control/source-control.service.ee';
 import type { ExportableCredential } from '@/environments.ee/source-control/types/exportable-credential';
 import type { ExportableFolder } from '@/environments.ee/source-control/types/exportable-folders';
@@ -37,10 +42,6 @@ import type { RemoteResourceOwner } from '@/environments.ee/source-control/types
 import { BadRequestError } from '@/errors/response-errors/bad-request.error';
 import { ForbiddenError } from '@/errors/response-errors/forbidden.error';
 import { EventService } from '@/events/event.service';
-import { createCredentials } from '@test-integration/db/credentials';
-import { createFolder } from '@test-integration/db/folders';
-import { assignTagToWorkflow, createTag, updateTag } from '@test-integration/db/tags';
-import { createUser } from '@test-integration/db/users';
 
 jest.mock('fast-glob');
 
@@ -88,6 +89,7 @@ function toExportableCredential(
 		name: cred.name,
 		type: cred.type,
 		ownedBy: resourceOwner,
+		isGlobal: cred.isGlobal ?? false,
 	};
 }
 
@@ -175,6 +177,7 @@ describe('SourceControlService', () => {
 
 	let gitService: SourceControlGitService;
 	let service: SourceControlService;
+	let statusService: SourceControlStatusService;
 
 	let cipher: Cipher;
 
@@ -218,10 +221,10 @@ describe('SourceControlService', () => {
 			*/
 
 		[globalAdmin, globalOwner, globalMember, projectAdmin] = await Promise.all([
-			await createUser({ role: 'global:admin' }),
-			await createUser({ role: 'global:owner' }),
-			await createUser({ role: 'global:member' }),
-			await createUser({ role: 'global:member' }),
+			createUser({ role: GLOBAL_ADMIN_ROLE }),
+			createUser({ role: GLOBAL_OWNER_ROLE }),
+			createUser({ role: GLOBAL_MEMBER_ROLE }),
+			createUser({ role: GLOBAL_MEMBER_ROLE }),
 		]);
 
 		[projectA, projectB] = await Promise.all([
@@ -229,7 +232,7 @@ describe('SourceControlService', () => {
 			createTeamProject('ProjectB'),
 		]);
 
-		let [
+		const [
 			globalAdminWorkflows,
 			globalOwnerWorkflows,
 			globalMemberWorkflows,
@@ -324,7 +327,7 @@ describe('SourceControlService', () => {
 			),
 		]);
 
-		let [projectACredentials, projectBCredentials] = await Promise.all(
+		const [projectACredentials, projectBCredentials] = await Promise.all(
 			[projectA, projectB].map(async (project) => [
 				await createCredentials(
 					{
@@ -367,7 +370,7 @@ describe('SourceControlService', () => {
 			}),
 		);
 
-		let [projectAFolders, projectBFolders] = await Promise.all(
+		const [projectAFolders, projectBFolders] = await Promise.all(
 			[projectA, projectB].map(async (project) => {
 				const parent = await createFolder(project, {
 					name: `${project.name}-FolderA`,
@@ -423,6 +426,7 @@ describe('SourceControlService', () => {
 		};
 
 		gitService = mock<SourceControlGitService>();
+		statusService = Container.get(SourceControlStatusService);
 
 		service = new SourceControlService(
 			mock(),
@@ -430,14 +434,14 @@ describe('SourceControlService', () => {
 			sourceControlPreferencesService,
 			Container.get(SourceControlExportService),
 			Container.get(SourceControlImportService),
-			Container.get(TagRepository),
-			Container.get(FolderRepository),
+			Container.get(SourceControlScopedService),
 			Container.get(EventService),
+			statusService,
 		);
 
 		// Skip actual git operations
 		service.sanityCheck = async () => {};
-		service.resetWorkfolder = async () => undefined;
+		statusService['resetWorkfolder'] = async () => undefined;
 
 		// Git mocking
 		gitFiles = {
@@ -536,7 +540,7 @@ describe('SourceControlService', () => {
 		describe('direction: push', () => {
 			describe('global:admin user', () => {
 				it('should see all workflows', async () => {
-					let result = await service.getStatus(globalAdmin, {
+					const result = await service.getStatus(globalAdmin, {
 						direction: 'push',
 						preferLocalVersion: true,
 						verbose: false,
@@ -600,7 +604,7 @@ describe('SourceControlService', () => {
 				});
 
 				it('should see all credentials', async () => {
-					let result = await service.getStatus(globalAdmin, {
+					const result = await service.getStatus(globalAdmin, {
 						direction: 'push',
 						preferLocalVersion: true,
 						verbose: false,
@@ -637,7 +641,7 @@ describe('SourceControlService', () => {
 				});
 
 				it('should see all folder', async () => {
-					let result = await service.getStatus(globalAdmin, {
+					const result = await service.getStatus(globalAdmin, {
 						direction: 'push',
 						preferLocalVersion: true,
 						verbose: false,
@@ -664,7 +668,7 @@ describe('SourceControlService', () => {
 
 			describe('global:member user', () => {
 				it('should see nothing', async () => {
-					let result = await service.getStatus(globalMember, {
+					const result = await service.getStatus(globalMember, {
 						direction: 'push',
 						preferLocalVersion: true,
 						verbose: false,
@@ -676,7 +680,7 @@ describe('SourceControlService', () => {
 
 			describe('project:Admin user', () => {
 				it('should see only workflows in correct scope', async () => {
-					let result = await service.getStatus(projectAdmin, {
+					const result = await service.getStatus(projectAdmin, {
 						direction: 'push',
 						preferLocalVersion: true,
 						verbose: false,
@@ -736,7 +740,7 @@ describe('SourceControlService', () => {
 				});
 
 				it('should see only credentials in correct scope', async () => {
-					let result = await service.getStatus(projectAdmin, {
+					const result = await service.getStatus(projectAdmin, {
 						direction: 'push',
 						preferLocalVersion: true,
 						verbose: false,
@@ -773,7 +777,7 @@ describe('SourceControlService', () => {
 				});
 
 				it('should see only folders in correct scope', async () => {
-					let result = await service.getStatus(projectAdmin, {
+					const result = await service.getStatus(projectAdmin, {
 						direction: 'push',
 						preferLocalVersion: true,
 						verbose: false,
@@ -836,7 +840,7 @@ describe('SourceControlService', () => {
 			});
 
 			it('should fail with BadRequest', async () => {
-				let allChanges = (await service.getStatus(globalAdmin, {
+				const allChanges = (await service.getStatus(globalAdmin, {
 					direction: 'push',
 					preferLocalVersion: true,
 					verbose: false,
@@ -853,7 +857,7 @@ describe('SourceControlService', () => {
 
 		describe('global:admin user', () => {
 			it('should update all workflows, credentials, tags and folder', async () => {
-				let allChanges = (await service.getStatus(globalAdmin, {
+				const allChanges = (await service.getStatus(globalAdmin, {
 					direction: 'push',
 					preferLocalVersion: true,
 					verbose: false,
@@ -871,11 +875,19 @@ describe('SourceControlService', () => {
 				const credentialFiles = result.statusResult
 					.filter((change) => change.type === 'credential' && change.status !== 'deleted')
 					.map((change) => change.file);
+
+				const projectFiles = result.statusResult
+					.filter((change) => change.type === 'project' && change.status !== 'deleted')
+					.map((change) => change.file);
+
 				expect(workflowFiles).toHaveLength(8);
 				expect(credentialFiles).toHaveLength(2);
+				expect(projectFiles).toHaveLength(2);
 
 				expect(gitService.push).toBeCalled();
-				expect(fsWriteFile).toBeCalledTimes(workflowFiles.length + credentialFiles.length + 2); // folders + tags
+				expect(fsWriteFile).toBeCalledTimes(
+					workflowFiles.length + credentialFiles.length + projectFiles.length + 2,
+				); // folders + tags
 				expect(Object.keys(updatedFiles)).toEqual(expect.arrayContaining(workflowFiles));
 				expect(Object.keys(updatedFiles)).toEqual(expect.arrayContaining(credentialFiles));
 				expect(Object.keys(updatedFiles)).toEqual(
@@ -887,7 +899,7 @@ describe('SourceControlService', () => {
 			});
 
 			it('should update all workflows and credentials without arguments', async () => {
-				let allChanges = (await service.getStatus(globalAdmin, {
+				const allChanges = (await service.getStatus(globalAdmin, {
 					direction: 'push',
 					preferLocalVersion: true,
 					verbose: false,
@@ -905,14 +917,22 @@ describe('SourceControlService', () => {
 				const credentialFiles = result.statusResult
 					.filter((change) => change.type === 'credential' && change.status !== 'deleted')
 					.map((change) => change.file);
+				const projectFiles = result.statusResult
+					.filter((change) => change.type === 'project' && change.status !== 'deleted')
+					.map((change) => change.file);
+
 				expect(workflowFiles).toHaveLength(8);
 				expect(credentialFiles).toHaveLength(2);
-				const numberFilesToWrite = workflowFiles.length + credentialFiles.length + 2; // folders + tags
+				expect(projectFiles).toHaveLength(2);
+				const numberFilesToWrite =
+					workflowFiles.length + credentialFiles.length + projectFiles.length + 2; // folders + tags + projects
 
 				const filesToWrite =
 					allChanges.filter(
 						(change) =>
-							(change.type === 'workflow' || change.type === 'credential') &&
+							(change.type === 'workflow' ||
+								change.type === 'credential' ||
+								change.type === 'project') &&
 							change.status !== 'deleted',
 					).length + 2; // folders + tags
 
@@ -921,6 +941,7 @@ describe('SourceControlService', () => {
 
 				expect(Object.keys(updatedFiles)).toEqual(expect.arrayContaining(workflowFiles));
 				expect(Object.keys(updatedFiles)).toEqual(expect.arrayContaining(credentialFiles));
+				expect(Object.keys(updatedFiles)).toEqual(expect.arrayContaining(projectFiles));
 				expect(Object.keys(updatedFiles)).toEqual(
 					expect.arrayContaining([expect.stringMatching(SOURCE_CONTROL_FOLDERS_EXPORT_FILE)]),
 				);
@@ -940,7 +961,7 @@ describe('SourceControlService', () => {
 
 		describe('project:admin', () => {
 			it('should update selected workflows, credentials, tags and folders', async () => {
-				let allChanges = (await service.getStatus(projectAdmin, {
+				const allChanges = (await service.getStatus(projectAdmin, {
 					direction: 'push',
 					preferLocalVersion: true,
 					verbose: false,
@@ -958,11 +979,18 @@ describe('SourceControlService', () => {
 				const credentialFiles = result.statusResult
 					.filter((change) => change.type === 'credential' && change.status !== 'deleted')
 					.map((change) => change.file);
+				const projectFiles = result.statusResult
+					.filter((change) => change.type === 'project' && change.status !== 'deleted')
+					.map((change) => change.file);
 
 				expect(workflowFiles).toHaveLength(2);
 				expect(credentialFiles).toHaveLength(1);
+				expect(projectFiles).toHaveLength(1);
 
-				expect(fsWriteFile).toBeCalledTimes(workflowFiles.length + credentialFiles.length + 2); // folders + tags
+				// folders + tags + projects (1)
+				expect(fsWriteFile).toBeCalledTimes(
+					workflowFiles.length + credentialFiles.length + projectFiles.length + 2,
+				);
 				expect(Object.keys(updatedFiles)).toEqual(expect.arrayContaining(workflowFiles));
 				expect(Object.keys(updatedFiles)).toEqual(expect.arrayContaining(credentialFiles));
 				expect(Object.keys(updatedFiles)).toEqual(
@@ -971,10 +999,11 @@ describe('SourceControlService', () => {
 				expect(Object.keys(updatedFiles)).toEqual(
 					expect.arrayContaining([expect.stringMatching(SOURCE_CONTROL_TAGS_EXPORT_FILE)]),
 				);
+				expect(Object.keys(updatedFiles)).toEqual(expect.arrayContaining(projectFiles));
 			});
 
 			it('should throw ForbiddenError when trying to push workflows out of scope', async () => {
-				let allChanges = (await service.getStatus(globalAdmin, {
+				const allChanges = (await service.getStatus(globalAdmin, {
 					direction: 'push',
 					preferLocalVersion: true,
 					verbose: false,
@@ -995,7 +1024,7 @@ describe('SourceControlService', () => {
 			});
 
 			it('should throw ForbiddenError when trying to push credentials out of scope', async () => {
-				let allChanges = (await service.getStatus(globalAdmin, {
+				const allChanges = (await service.getStatus(globalAdmin, {
 					direction: 'push',
 					preferLocalVersion: true,
 					verbose: false,
@@ -1035,7 +1064,7 @@ describe('SourceControlService', () => {
 				// Add a new tag to newly assigned workflow
 				await assignTagToWorkflow(tags[1], movedIntoScopeWorkflow);
 
-				let allChanges = (await service.getStatus(projectAdmin, {
+				const allChanges = (await service.getStatus(projectAdmin, {
 					direction: 'push',
 					preferLocalVersion: true,
 					verbose: false,
@@ -1065,7 +1094,7 @@ describe('SourceControlService', () => {
 			});
 
 			it('should update folders in scope and keep out of scope ones', async () => {
-				let allChanges = (await service.getStatus(projectAdmin, {
+				const allChanges = (await service.getStatus(projectAdmin, {
 					direction: 'push',
 					preferLocalVersion: true,
 					verbose: false,
@@ -1103,7 +1132,7 @@ describe('SourceControlService', () => {
 
 		describe('global:member', () => {
 			it('should deny all changes', async () => {
-				let allChanges = (await service.getStatus(globalAdmin, {
+				const allChanges = (await service.getStatus(globalAdmin, {
 					direction: 'push',
 					preferLocalVersion: true,
 					verbose: false,
@@ -1118,7 +1147,7 @@ describe('SourceControlService', () => {
 			});
 
 			it('should deny any changes', async () => {
-				let allChanges = (await service.getStatus(globalAdmin, {
+				const allChanges = (await service.getStatus(globalAdmin, {
 					direction: 'push',
 					preferLocalVersion: true,
 					verbose: false,
@@ -1131,6 +1160,200 @@ describe('SourceControlService', () => {
 					}),
 				).rejects.toThrowError(ForbiddenError);
 			});
+		});
+	});
+
+	describe('isGlobal flag modification detection', () => {
+		let testGlobalOwner: User;
+		let testProject: Project;
+
+		beforeAll(async () => {
+			testGlobalOwner = await createUser({ role: GLOBAL_OWNER_ROLE });
+			testProject = await createTeamProject('TestProjectForGlobal', testGlobalOwner);
+		});
+
+		afterEach(() => {
+			globMock.mockClear();
+			fsReadFile.mockClear();
+		});
+
+		const setupMocksForCredential = (
+			credential: CredentialsEntity,
+			remoteCredential: ExportableCredential,
+		) => {
+			const testGitFiles = {
+				[`${SOURCE_CONTROL_CREDENTIAL_EXPORT_FOLDER}/${credential.id}.json`]: remoteCredential,
+				[SOURCE_CONTROL_TAGS_EXPORT_FILE]: { tags: [], mappings: [] },
+				[SOURCE_CONTROL_FOLDERS_EXPORT_FILE]: { folders: [] },
+			};
+
+			globMock.mockImplementation(async (path, opts) => {
+				if (opts.cwd?.endsWith(SOURCE_CONTROL_WORKFLOW_EXPORT_FOLDER)) {
+					return [];
+				} else if (opts.cwd?.endsWith(SOURCE_CONTROL_CREDENTIAL_EXPORT_FOLDER)) {
+					return Object.keys(testGitFiles).filter((file) =>
+						file.startsWith(SOURCE_CONTROL_CREDENTIAL_EXPORT_FOLDER),
+					);
+				} else if (path === SOURCE_CONTROL_FOLDERS_EXPORT_FILE) {
+					return [SOURCE_CONTROL_FOLDERS_EXPORT_FILE];
+				} else if (path === SOURCE_CONTROL_TAGS_EXPORT_FILE) {
+					return [SOURCE_CONTROL_TAGS_EXPORT_FILE];
+				}
+				return [];
+			});
+
+			fsReadFile.mockImplementation(async (file) => {
+				const fileName = basename(file as string);
+				const fullPath = Object.keys(testGitFiles).find((key) => key.endsWith(fileName));
+				if (fullPath) {
+					return Buffer.from(JSON.stringify(testGitFiles[fullPath]));
+				}
+				return Buffer.from('{}');
+			});
+		};
+
+		it('should detect credential as modified when isGlobal changes from false to true', async () => {
+			// Create a test credential with isGlobal: false
+			const credential = await createCredentials(
+				{
+					name: 'Test Credential isGlobal false->true',
+					type: 'testType',
+					data: cipher.encrypt({}),
+					isGlobal: false,
+				},
+				testProject,
+			);
+
+			// Setup: Mock remote credential with isGlobal: true
+			const remoteCredential = toExportableCredential(credential, testProject);
+			remoteCredential.isGlobal = true;
+			setupMocksForCredential(credential, remoteCredential);
+
+			// Act
+			const result = (await service.getStatus(testGlobalOwner, {
+				direction: 'push',
+				preferLocalVersion: true,
+				verbose: false,
+			})) as SourceControlledFile[];
+
+			// Assert
+			const modifiedCredentials = result.filter(
+				(r: SourceControlledFile) => r.type === 'credential' && r.status === 'modified',
+			);
+
+			expect(modifiedCredentials.some((c) => c.id === credential.id)).toBe(true);
+		});
+
+		it('should detect credential as modified when isGlobal changes from true to false', async () => {
+			const credential = await createCredentials(
+				{
+					name: 'Test Credential isGlobal true->false',
+					type: 'testType',
+					data: cipher.encrypt({}),
+					isGlobal: true,
+				},
+				testProject,
+			);
+
+			const remoteCredential = toExportableCredential(credential, testProject);
+			remoteCredential.isGlobal = false;
+			setupMocksForCredential(credential, remoteCredential);
+
+			const result = (await service.getStatus(testGlobalOwner, {
+				direction: 'push',
+				preferLocalVersion: true,
+				verbose: false,
+			})) as SourceControlledFile[];
+
+			const modifiedCredentials = result.filter(
+				(r: SourceControlledFile) => r.type === 'credential' && r.status === 'modified',
+			);
+
+			expect(modifiedCredentials.some((c) => c.id === credential.id)).toBe(true);
+		});
+
+		it('should NOT detect credential as modified when isGlobal is undefined vs false', async () => {
+			const credential = await createCredentials(
+				{
+					name: 'Test Credential isGlobal undefined vs false',
+					type: 'testType',
+					data: cipher.encrypt({}),
+					isGlobal: false,
+				},
+				testProject,
+			);
+
+			const remoteCredential = toExportableCredential(credential, testProject);
+			delete remoteCredential.isGlobal;
+			setupMocksForCredential(credential, remoteCredential);
+
+			const result = (await service.getStatus(testGlobalOwner, {
+				direction: 'push',
+				preferLocalVersion: true,
+				verbose: false,
+			})) as SourceControlledFile[];
+
+			const modifiedCredentials = result.filter(
+				(r: SourceControlledFile) => r.type === 'credential' && r.status === 'modified',
+			);
+
+			expect(modifiedCredentials.some((c) => c.id === credential.id)).toBe(false);
+		});
+
+		it('should detect credential as modified when isGlobal changes from undefined to true', async () => {
+			const credential = await createCredentials(
+				{
+					name: 'Test Credential isGlobal undefined->true',
+					type: 'testType',
+					data: cipher.encrypt({}),
+					isGlobal: false,
+				},
+				testProject,
+			);
+
+			const remoteCredential = toExportableCredential(credential, testProject);
+			remoteCredential.isGlobal = true;
+			setupMocksForCredential(credential, remoteCredential);
+
+			const result = (await service.getStatus(testGlobalOwner, {
+				direction: 'push',
+				preferLocalVersion: true,
+				verbose: false,
+			})) as SourceControlledFile[];
+
+			const modifiedCredentials = result.filter(
+				(r: SourceControlledFile) => r.type === 'credential' && r.status === 'modified',
+			);
+
+			expect(modifiedCredentials.some((c) => c.id === credential.id)).toBe(true);
+		});
+
+		it('should NOT detect credential as modified when isGlobal is the same', async () => {
+			const credential = await createCredentials(
+				{
+					name: 'Test Credential isGlobal same value',
+					type: 'testType',
+					data: cipher.encrypt({}),
+					isGlobal: true,
+				},
+				testProject,
+			);
+
+			const remoteCredential = toExportableCredential(credential, testProject);
+			remoteCredential.isGlobal = true;
+			setupMocksForCredential(credential, remoteCredential);
+
+			const result = (await service.getStatus(testGlobalOwner, {
+				direction: 'push',
+				preferLocalVersion: true,
+				verbose: false,
+			})) as SourceControlledFile[];
+
+			const modifiedCredentials = result.filter(
+				(r: SourceControlledFile) => r.type === 'credential' && r.status === 'modified',
+			);
+
+			expect(modifiedCredentials.some((c) => c.id === credential.id)).toBe(false);
 		});
 	});
 });

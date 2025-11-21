@@ -1,4 +1,4 @@
-ARG NODE_VERSION=22
+ARG NODE_VERSION=22.21.0
 
 # ==============================================================================
 # STAGE 1: Builder for Base Dependencies
@@ -14,14 +14,25 @@ RUN \
   find /usr/share/fonts/truetype/msttcorefonts/ -type l -exec unlink {} \;
 
 # Install essential OS dependencies
-RUN apk add --no-cache git openssh graphicsmagick tini tzdata ca-certificates libc6-compat jq
+RUN echo "https://dl-cdn.alpinelinux.org/alpine/v3.22/main" >> /etc/apk/repositories && echo "https://dl-cdn.alpinelinux.org/alpine/v3.22/community" >> /etc/apk/repositories && \
+    apk update && \
+    apk add --no-cache libxml2 && \
+    apk add --no-cache \
+        git \
+        openssh \
+        openssl \
+        graphicsmagick \
+        tini \
+        tzdata \
+        ca-certificates \
+        libc6-compat \
+        jq
 
-# Update npm, install full-icu and npm@11.4.2 to fix brace-expansion vulnerability
-# Remove npm update after vulnerability is fixed in in node image
-RUN npm install -g full-icu@1.5.0 npm@11.4.2
+# Install full-icu
+RUN npm install -g full-icu@1.5.0
 
-RUN apk del apk-tools && \
-  rm -rf /tmp/* /root/.npm /root/.cache/node /opt/yarn* /var/cache/apk/* /lib/apk/db
+RUN rm -rf /tmp/* /root/.npm /root/.cache/node /opt/yarn* && \
+  apk del apk-tools
 
 # ==============================================================================
 # STAGE 2: Final Base Runtime Image
