@@ -386,8 +386,8 @@ export class HttpRequestV3 implements INodeType {
 				if (timeout) {
 					requestOptions.timeout = timeout;
 				} else {
-					// set default timeout to 5 minutes
-					requestOptions.timeout = 300_000;
+					// set default timeout to 10 minutes
+					requestOptions.timeout = 600_000;
 				}
 				if (sendQuery && queryParameterArrays) {
 					Object.assign(requestOptions, {

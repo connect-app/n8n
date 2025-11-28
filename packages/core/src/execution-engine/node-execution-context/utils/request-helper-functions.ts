@@ -70,7 +70,7 @@ import type { IResponseError } from '@/interfaces';
 import { binaryToString } from './binary-helper-functions';
 import { parseIncomingMessage } from './parse-incoming-message';
 
-axios.defaults.timeout = 300000;
+axios.defaults.timeout = 600000; // 10 minutes
 // Prevent axios from adding x-form-www-urlencoded headers by default
 axios.defaults.headers.post = {};
 axios.defaults.headers.put = {};
