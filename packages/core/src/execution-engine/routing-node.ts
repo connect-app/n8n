@@ -214,8 +214,8 @@ export class RoutingNode {
 			if (timeout) {
 				itemContext[itemIndex].requestData.options.timeout = timeout;
 			} else {
-				// set default timeout to 5 minutes
-				itemContext[itemIndex].requestData.options.timeout = 300_000;
+				// set default timeout to 10 minutes
+				itemContext[itemIndex].requestData.options.timeout = 600_000;
 			}
 
 			requestPromises.push(
